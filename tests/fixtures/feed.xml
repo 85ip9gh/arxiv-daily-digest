@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <title type="html">ArXiv Query</title>
+  <entry>
+    <id>http://arxiv.org/abs/2508.01234v1</id>
+    <updated>2026-08-14T17:02:11Z</updated>
+    <published>2026-08-14T17:02:11Z</published>
+    <title>A Small Model That Cites Its
+  Sources</title>
+    <summary>  We show that requiring a model to quote the source sentence removes
+most fabricated fields. On a set of 400 documents the error rate falls from
+18 percent to under 2 percent.
+</summary>
+    <author><name>Ada Rivers</name></author>
+    <author><name>Bo Chen</name></author>
+    <link href="http://arxiv.org/abs/2508.01234v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2508.01234v1" rel="related" type="application/pdf"/>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="cs.CL"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2508.05678v2</id>
+    <updated>2026-08-13T09:30:00Z</updated>
+    <published>2026-08-12T09:30:00Z</published>
+    <title>Throughput Limits of 8B Models on Consumer GPUs</title>
+    <summary>  We benchmark eight open models on a single 8 GB card and report tokens per
+second under three quantization schemes.
+</summary>
+    <author><name>Cara Nolan</name></author>
+    <link href="http://arxiv.org/abs/2508.05678v2" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2508.05678v2" rel="related" type="application/pdf"/>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="cs.LG"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/broken</id>
+    <published>not a date</published>
+    <title>Unparseable entry that must be skipped</title>
+    <summary>No usable published date.</summary>
+  </entry>
+</feed>
