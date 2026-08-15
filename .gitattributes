@@ -1,0 +1,4 @@
+# The shell script is checked out on Linux and run by bash. Without this,
+# core.autocrlf on the Windows side rewrites it to CRLF and every line ends in
+# a stray \r, which bash reports as a command-not-found on the first line.
+*.sh text eol=lf
