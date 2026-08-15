@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arXiv AI digest</title>
+<meta name="description" content="Three new AI papers a day, summarized and checked against their abstracts.">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fcfcfa;
+  --panel: #ffffff;
+  --ink: #17181a;
+  --muted: #6b6f76;
+  --line: #e3e3df;
+  --accent: #17181a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111214;
+    --panel: #17181a;
+    --ink: #ededea;
+    --muted: #9aa0a6;
+    --line: #2a2c30;
+    --accent: #ededea;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 3rem 1.25rem 5rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 46rem; margin: 0 auto; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+header.masthead { border-bottom: 1px solid var(--line); padding-bottom: 1.25rem; margin-bottom: 2rem; }
+header.masthead h1 { font-size: 1.5rem; margin: 0 0 .35rem; letter-spacing: -.01em; }
+header.masthead p { margin: 0; color: var(--muted); font-size: .95rem; }
+.back { display: inline-block; margin-bottom: 1.5rem; font-size: .9rem; color: var(--muted); }
+.day-list { list-style: none; margin: 0; padding: 0; }
+.day-list li { border-bottom: 1px solid var(--line); padding: 1.25rem 0; }
+.day-list h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
+.day-list ol { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: .92rem; }
+.day-list ol li { border: 0; padding: .15rem 0; }
+article { border-top: 1px solid var(--line); padding-top: 1.75rem; margin-top: 1.75rem; }
+article:first-of-type { border-top: 0; margin-top: 0; }
+article h2 { font-size: 1.15rem; line-height: 1.35; margin: 0 0 .4rem; }
+.meta { color: var(--muted); font-size: .85rem; margin: 0 0 1rem; }
+.meta a { color: var(--muted); }
+.field { margin: 0 0 .85rem; }
+.field b { font-weight: 600; }
+blockquote {
+  margin: 1.25rem 0 .75rem;
+  padding: .6rem 0 .6rem 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+  font-size: .93rem;
+}
+blockquote.unverified { border-left-color: #b4632a; }
+.reason { color: var(--muted); font-size: .85rem; font-style: italic; margin: 0; }
+nav.pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: .9rem; }
+footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+</style>
+</head>
+<body>
+<main>
+<header class="masthead">
+<h1>arXiv AI digest</h1>
+<p>Three new AI papers a day, summarized and checked against their abstracts.</p>
+</header>
+<ul class="day-list">
+<li>
+<h2><a href="2026-08-15.html">August 15, 2026</a></h2>
+<ol>
+<li>QuoteBench: How Matched Scores Can Hide Command-Path Failures</li>
+<li>TraVEL: Trajectory-Guided Video Embedding Learning for Driving-Video Retrieval</li>
+<li>DFM Mimir v1: An Open HRM Delivering Frontier Performance at 1B Parameters Using Only Permissible Post-Training Data</li>
+</ol>
+</li>
+</ul>
+<footer>Summaries are machine written from the arXiv abstract and quote-checked against it.</footer>
+</main>
+</body>
+</html>
