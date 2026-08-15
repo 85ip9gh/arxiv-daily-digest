@@ -11,6 +11,7 @@ APP_DIR=${APP_DIR:-/home/deploy/arxiv-digest}
 BIND_IP=${BIND_IP:-100.100.100.100}
 PORT=${PORT:-4245}
 RUN_AT=${RUN_AT:-07:00}
+TZ_NAME=${TZ_NAME:-America/Halifax}
 CONTAINER=${CONTAINER:-arxiv-digest-web}
 
 cd "$APP_DIR"
@@ -21,6 +22,13 @@ python3 -m venv .venv
 ./.venv/bin/pip install --quiet -e .
 
 mkdir -p "$APP_DIR/site" "$APP_DIR/digests/data"
+
+# An empty site directory makes nginx answer 403 on the root, which reads like
+# a permissions fault rather than "no digests yet". Render whatever is archived,
+# and an empty index if nothing is.
+./.venv/bin/python -m arxiv_digest --rebuild-site \
+    --out-dir "$APP_DIR/digests" --site-dir "$APP_DIR/site" 2>/dev/null \
+    || ./.venv/bin/python -c "from pathlib import Path; from arxiv_digest import site; site.build([], Path('$APP_DIR/site'))"
 
 if [ ! -f "$APP_DIR/.env" ]; then
     cat > "$APP_DIR/.env" <<'ENVEOF'
@@ -54,7 +62,9 @@ sudo tee /etc/systemd/system/arxiv-digest.timer >/dev/null <<EOF
 Description=Run the arXiv digest every morning
 
 [Timer]
-OnCalendar=*-*-* $RUN_AT:00
+# The timezone is spelled out because g7 runs on UTC. Without it, 07:00 here
+# means 04:00 in Halifax.
+OnCalendar=*-*-* $RUN_AT:00 $TZ_NAME
 # arXiv rate limits by IP and the free model tiers do too. A spread start keeps
 # this off the exact minute every other scheduled job in the world uses.
 RandomizedDelaySec=900
