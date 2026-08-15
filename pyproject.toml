@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arxiv-daily-digest"
+version = "0.1.0"
+description = "Picks three of the day's new arXiv AI papers and summarizes them with a local model"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+arxiv-digest = "arxiv_digest.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["arxiv_digest*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
