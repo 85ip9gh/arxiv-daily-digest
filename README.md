@@ -131,25 +131,36 @@ Registers a scheduled task at 07:00 logging to `digests\nightly.log`.
 
 ## Daily run on g7-server, published on the domain
 
+Live at **https://papers.pesanth.com**.
+
 ```bash
 bash deploy/install_g7.sh
 ```
 
-Creates a venv, a `systemd` timer at 07:00 with a 15 minute spread, and an
-nginx container serving `site/` read-only, bound to the tailnet address only.
-Put the API key in `/home/pesanth/arxiv-digest/.env` and the timer starts
-producing days.
+Creates a venv, a `systemd` timer at 07:00 America/Halifax with a 15 minute
+spread, and an nginx container serving `site/` read-only under a 64 MB cap,
+bound to the tailnet address only. Cloudflare Tunnel is the sole public path,
+the same containment every other site on that box uses. Put the API key in
+`/home/pesanth/arxiv-digest/.env` and the timer starts producing days.
+
+The timezone is spelled out in the unit because the server runs on UTC, where
+`07:00` would mean 04:00 in Halifax.
 
 Two edge changes are left out of the script on purpose, because their blast
-radius is the whole zone rather than this app:
+radius is the whole zone rather than this app. Both are already done:
 
-1. Add the hostname to `/etc/cloudflared/config.yml`, above the catch-all
-   404 rule, pointing at `http://100.79.13.73:4245`. Validate before
-   restarting, and note the flag goes before the subcommand:
+1. The hostname in `/etc/cloudflared/config.yml` above the catch-all 404 rule,
+   pointing at `http://100.79.13.73:4245`. Validate before restarting, and note
+   the flag goes before the subcommand:
    `cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate`.
-2. Create the DNS record: `cloudflared tunnel route dns <tunnel> <hostname>`.
+2. The DNS record: `cloudflared tunnel route dns <tunnel> <hostname>`.
 
 Recheck every existing hostname after the restart, not only the new one.
+
+The site ships a `robots.txt` that disallows everything. It stays publicly
+readable, it just does not ask to be indexed, because machine-written summaries
+under a personal domain compete in search with that domain's own pages. Delete
+`ROBOTS` in `site.py` to opt back in.
 
 ## Four things that are load-bearing
 
@@ -191,7 +202,7 @@ the same paper does not lead the digest two days running.
 python -m pytest
 ```
 
-55 tests, no network and no model. The arXiv parser runs against a fixture
+56 tests, no network and no model. The arXiv parser runs against a fixture
 feed, the agent tests replace the model call with canned responses including
 the invented quotes the citation check exists to catch, and the site tests
 cover escaping, the older/newer pager, and the promise that a page fetches
