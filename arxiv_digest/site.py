@@ -192,11 +192,19 @@ def render_day(day: dict, *, newer: str | None = None, older: str | None = None)
     return _page(f"{_long_date(day['date'])} | {SITE_TITLE}", body)
 
 
+# Machine-written summaries sitting under a personal domain would compete with
+# that domain's own pages in search results. The site stays publicly readable,
+# it just does not ask to be indexed. Delete this to opt back in.
+ROBOTS = "User-agent: *\nDisallow: /\n"
+
+
 def build(days: list[dict], site_dir: Path) -> list[Path]:
     """Write the whole site. Every page is regenerated on every build."""
     site_dir.mkdir(parents=True, exist_ok=True)
     written = [site_dir / "index.html"]
     (site_dir / "index.html").write_text(render_index(days), encoding="utf-8")
+    (site_dir / "robots.txt").write_text(ROBOTS, encoding="utf-8")
+    written.append(site_dir / "robots.txt")
 
     # `days` is newest first, so the previous entry is the newer neighbour.
     for i, day in enumerate(days):
