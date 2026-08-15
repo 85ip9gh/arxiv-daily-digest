@@ -2,7 +2,14 @@ from datetime import date, datetime, timezone
 
 from arxiv_digest.agent import Summary
 from arxiv_digest.arxiv import Paper
-from arxiv_digest.digest import load_seen, render, save_seen, write_digest
+from arxiv_digest.digest import (
+    load_days,
+    load_seen,
+    render,
+    save_day,
+    save_seen,
+    write_digest,
+)
 
 LONG_DASHES = (chr(0x2014), chr(0x2013))
 
@@ -66,6 +73,40 @@ def test_digest_is_written_under_the_dated_name(tmp_path):
     path = write_digest("body\n", out_dir=tmp_path / "digests", day=date(2026, 8, 15))
     assert path.name == "2026-08-15.md"
     assert path.read_text(encoding="utf-8") == "body\n"
+
+
+def test_archived_day_carries_everything_the_site_needs(tmp_path):
+    save_day(tmp_path, day=date(2026, 8, 15), model_label="m", summaries=[summary(1)])
+    days = load_days(tmp_path)
+    assert len(days) == 1
+    assert days[0]["date"] == "2026-08-15"
+    assert days[0]["model"] == "m"
+    paper = days[0]["papers"][0]
+    assert paper["title"] == "Paper 1"
+    assert paper["author_line"] == "Ada Rivers, Bo Chen"
+    assert paper["pdf_url"].endswith("2508.00001v1")
+    assert paper["so_what"] == "Pipelines stop lying."
+    assert paper["grounded"] is True
+
+
+def test_days_come_back_newest_first(tmp_path):
+    for day in (date(2026, 8, 13), date(2026, 8, 15), date(2026, 8, 14)):
+        save_day(tmp_path, day=day, model_label="m", summaries=[summary(1)])
+    assert [d["date"] for d in load_days(tmp_path)] == [
+        "2026-08-15",
+        "2026-08-14",
+        "2026-08-13",
+    ]
+
+
+def test_a_corrupt_archived_day_is_skipped_not_fatal(tmp_path):
+    save_day(tmp_path, day=date(2026, 8, 15), model_label="m", summaries=[summary(1)])
+    (tmp_path / "data" / "2026-08-14.json").write_text("{broken", encoding="utf-8")
+    assert [d["date"] for d in load_days(tmp_path)] == ["2026-08-15"]
+
+
+def test_no_archive_directory_is_not_an_error(tmp_path):
+    assert load_days(tmp_path) == []
 
 
 def test_seen_round_trips_and_starts_empty(tmp_path):

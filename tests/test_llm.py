@@ -5,7 +5,9 @@ import pytest
 from arxiv_digest import llm
 from arxiv_digest.llm import LLMConfig, LLMError
 
-CONFIG = LLMConfig()
+CONFIG = LLMConfig(
+    backend="ollama", model="qwen3:8b", base_url="http://localhost:11434"
+)
 
 
 class TestParsing:
@@ -29,7 +31,7 @@ class TestParsing:
 
 
 class TestConfig:
-    def test_ollama_is_the_default(self, monkeypatch):
+    def _clear(self, monkeypatch):
         for name in [
             "ARXIV_DIGEST_BACKEND",
             "ARXIV_DIGEST_MODEL",
@@ -37,14 +39,25 @@ class TestConfig:
             "ARXIV_DIGEST_API_KEY",
         ]:
             monkeypatch.delenv(name, raising=False)
+
+    def test_a_hosted_free_tier_is_the_default(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("ARXIV_DIGEST_API_KEY", "test-key")
         config = LLMConfig.from_env()
-        assert config.backend == "ollama"
+        assert config.backend == "openai"
+        assert config.base_url == "https://api.groq.com/openai/v1"
+        assert config.label.endswith("(api.groq.com)")
+
+    def test_ollama_stays_available_by_name(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("ARXIV_DIGEST_BACKEND", "ollama")
+        config = LLMConfig.from_env()
         assert config.model == "qwen3:8b"
+        assert config.api_key is None
         assert config.label.endswith("(local)")
 
-    def test_openai_backend_needs_a_key(self, monkeypatch):
-        monkeypatch.setenv("ARXIV_DIGEST_BACKEND", "openai")
-        monkeypatch.delenv("ARXIV_DIGEST_API_KEY", raising=False)
+    def test_the_default_backend_needs_a_key(self, monkeypatch):
+        self._clear(monkeypatch)
         with pytest.raises(LLMError):
             LLMConfig.from_env()
 

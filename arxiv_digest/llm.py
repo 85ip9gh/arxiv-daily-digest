@@ -1,27 +1,32 @@
-"""One JSON-returning `complete` call, over either a local or a hosted model.
+"""One JSON-returning `complete` call, over either a hosted or a local model.
 
 Two backends, same function signature:
 
-`ollama`  the default. Talks to a local daemon and constrains generation with
-          Ollama's native `format` schema, which is what makes an 8B model
-          return usable JSON instead of a preamble plus prose.
-
-`openai`  any OpenAI-compatible endpoint, which covers the free tiers worth
-          using (Groq, OpenRouter, Google's OpenAI-compatible route). Support
-          for strict JSON schemas is uneven across those providers, so this
-          backend asks for a JSON object and puts the schema in the prompt
+`openai`  the default. Any OpenAI-compatible endpoint, which covers the free
+          tiers worth using (Groq, Google's compatible route, OpenRouter).
+          Support for strict JSON schemas is uneven across those providers, so
+          this backend asks for a JSON object and puts the schema in the prompt
           instead. That is weaker, hence the validation in `agent.py`.
+
+`ollama`  a local daemon, opt in with `ARXIV_DIGEST_BACKEND=ollama`. Constrains
+          generation with Ollama's native `format` schema, which is what makes
+          an 8B model return usable JSON instead of a preamble plus prose.
 """
 from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 
-DEFAULT_MODEL = "qwen3:8b"
+DEFAULT_BACKEND = "openai"
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+
+DEFAULT_OLLAMA_MODEL = "qwen3:8b"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 # Summarizing a 1,500 character abstract on a consumer GPU runs well under a
 # minute, but a cold model load is the slow part of the first call of the day.
@@ -34,9 +39,9 @@ class LLMError(RuntimeError):
 
 @dataclass(frozen=True)
 class LLMConfig:
-    backend: str = "ollama"
+    backend: str = DEFAULT_BACKEND
     model: str = DEFAULT_MODEL
-    base_url: str = DEFAULT_OLLAMA_URL
+    base_url: str = DEFAULT_BASE_URL
     api_key: str | None = None
     timeout: int = DEFAULT_TIMEOUT
     temperature: float = 0.2
@@ -47,19 +52,17 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        backend = os.environ.get("ARXIV_DIGEST_BACKEND", "ollama").strip().lower()
+        backend = os.environ.get("ARXIV_DIGEST_BACKEND", DEFAULT_BACKEND).strip().lower()
         if backend not in {"ollama", "openai"}:
-            raise LLMError(f"unknown backend {backend!r}, expected ollama or openai")
+            raise LLMError(f"unknown backend {backend!r}, expected openai or ollama")
 
         if backend == "ollama":
-            model = os.environ.get("ARXIV_DIGEST_MODEL", DEFAULT_MODEL)
+            model = os.environ.get("ARXIV_DIGEST_MODEL", DEFAULT_OLLAMA_MODEL)
             base_url = os.environ.get("ARXIV_DIGEST_BASE_URL", DEFAULT_OLLAMA_URL)
             api_key = None
         else:
-            model = os.environ.get("ARXIV_DIGEST_MODEL", "llama-3.3-70b-versatile")
-            base_url = os.environ.get(
-                "ARXIV_DIGEST_BASE_URL", "https://api.groq.com/openai/v1"
-            )
+            model = os.environ.get("ARXIV_DIGEST_MODEL", DEFAULT_MODEL)
+            base_url = os.environ.get("ARXIV_DIGEST_BASE_URL", DEFAULT_BASE_URL)
             api_key = os.environ.get("ARXIV_DIGEST_API_KEY")
             if not api_key:
                 raise LLMError(
@@ -78,8 +81,10 @@ class LLMConfig:
 
     @property
     def label(self) -> str:
-        where = "local" if self.backend == "ollama" else self.base_url
-        return f"{self.model} ({where})"
+        if self.backend == "ollama":
+            return f"{self.model} (local)"
+        host = urllib.parse.urlparse(self.base_url).hostname or self.base_url
+        return f"{self.model} ({host})"
 
 
 def _post(url: str, body: dict[str, Any], config: LLMConfig) -> dict[str, Any]:
@@ -117,6 +122,40 @@ def _parse_json(content: str, config: LLMConfig) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise LLMError(f"{config.model} returned {type(parsed).__name__}, not an object")
     return parsed
+
+
+def available_models(config: LLMConfig) -> list[str]:
+    """Best effort list of model ids, for when a configured name is rejected.
+
+    Free tiers retire model names without much notice, and "model not found"
+    is the one failure where the fix is a name the provider will hand over.
+    """
+    try:
+        if config.backend == "ollama":
+            payload = requests.get(f"{config.base_url}/api/tags", timeout=30).json()
+            return sorted(str(m.get("name", "")) for m in payload.get("models", []))
+        headers = {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+        payload = requests.get(
+            f"{config.base_url}/models", headers=headers, timeout=30
+        ).json()
+        return sorted(str(m.get("id", "")) for m in payload.get("data", []))
+    except (requests.RequestException, ValueError, AttributeError):
+        return []
+
+
+def check(config: LLMConfig) -> str:
+    """Run one trivial call so a bad key or model name fails now, not at 07:00."""
+    schema = {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+    }
+    answer = complete(
+        'Reply with {"ok": true} and nothing else.', schema, config=config
+    )
+    if "ok" not in answer:
+        raise LLMError(f"{config.label} answered {answer!r}, which has no ok field")
+    return config.label
 
 
 def complete(
