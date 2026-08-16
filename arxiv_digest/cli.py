@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow papers that appeared in an earlier digest",
     )
     parser.add_argument(
+        "--append",
+        action="store_true",
+        help="add to today's archived papers instead of replacing them",
+    )
+    parser.add_argument(
         "--stdout", action="store_true", help="print the digest instead of writing it"
     )
     parser.add_argument(
@@ -229,7 +234,19 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     today = date.today()
-    text = digest.render(summaries, day=today, model_label=config.label)
+    # The markdown covers the whole day, so an append run has to render from the
+    # merged records rather than from the summaries this process happens to hold.
+    records = [digest.to_record(s) for s in summaries]
+    if args.append:
+        existing = digest.day_records(args.out_dir, today)
+        records = digest.merge_records(existing, records)
+        if existing:
+            print(
+                f"appending {len(records) - len(existing)} to the "
+                f"{len(existing)} already archived for {today.isoformat()}",
+                file=sys.stderr,
+            )
+    text = digest.render_records(records, day=today, model_label=config.label)
 
     if args.stdout:
         print(text)
@@ -237,7 +254,11 @@ def main(argv: list[str] | None = None) -> int:
 
     path = digest.write_digest(text, out_dir=args.out_dir, day=today)
     digest.save_day(
-        args.out_dir, day=today, model_label=config.label, summaries=summaries
+        args.out_dir,
+        day=today,
+        model_label=config.label,
+        summaries=summaries,
+        append=args.append,
     )
     print(f"wrote {path}", file=sys.stderr)
 

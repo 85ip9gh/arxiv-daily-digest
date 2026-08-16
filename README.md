@@ -94,6 +94,7 @@ Useful flags:
 | `--interests` | agents, retrieval, evals, small models | what the selector favours |
 | `--no-fulltext` | off | summarize from the abstract only |
 | `--repeats` | off | allow papers from an earlier digest |
+| `--append` | off | add to today's archived papers instead of replacing them |
 | `--stdout` | off | print instead of writing anything |
 | `--no-site` | off | archive and markdown only |
 | `-o, --out-dir` | `digests` | where the archive lives |
@@ -286,6 +287,13 @@ hitting it stops the run and publishes what is already summarized.
 
 Papers already summarized are recorded in `digests/seen.json` and skipped, so
 the same paper does not lead the digest two days running.
+
+That filter is also why a second run of the same day needs `--append`. Without
+it the day is rewritten from scratch, and since the first run's papers are now
+in `seen.json` the rewrite picks a different set, deleting the morning's work
+rather than adding to it. With `--append` the existing papers keep their
+positions and the new ones land after them, so a top-up run that dies partway
+can only leave the day the same or longer.
 
 ## Tests
 
