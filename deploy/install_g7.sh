@@ -68,9 +68,10 @@ Description=Run the arXiv digest every morning
 # The timezone is spelled out because g7 runs on UTC. Without it, 07:00 here
 # means 04:00 in Halifax.
 OnCalendar=*-*-* $RUN_AT:00 $TZ_NAME
-# arXiv rate limits by IP and the free model tiers do too. A spread start keeps
-# this off the exact minute every other scheduled job in the world uses.
-RandomizedDelaySec=900
+# No RandomizedDelaySec. A spread start is for fleets that would stampede a
+# shared service; this is one box making one arXiv request, so the spread only
+# bought an unpredictable publish time somewhere in a 15 minute window. The run
+# takes well under a minute, so a fixed start puts the page up by $RUN_AT plus one.
 Persistent=true
 
 [Install]
