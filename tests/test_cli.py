@@ -153,3 +153,62 @@ class TestCountCap:
         monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
         cli.main(["--out-dir", str(tmp_path), "--no-site", "-n", "3"])
         assert seen["count"] == 3
+
+
+class TestAppend:
+    """Topping a day up must not delete what the morning run produced."""
+
+    def test_without_append_a_second_run_replaces_the_day(self, wired, monkeypatch):
+        tmp_path, papers = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "-n", "2"])
+        first = [r["arxiv_id"] for r in digest.load_days(tmp_path)[0]["papers"]]
+
+        # seen.json now filters the first run's papers out of the candidate pool.
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "-n", "2"])
+        second = [r["arxiv_id"] for r in digest.load_days(tmp_path)[0]["papers"]]
+        assert set(first).isdisjoint(second)
+        assert len(second) == 2
+
+    def test_append_keeps_the_earlier_papers(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "-n", "2"])
+        first = [r["arxiv_id"] for r in digest.load_days(tmp_path)[0]["papers"]]
+
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "--append", "-n", "2"])
+        after = [r["arxiv_id"] for r in digest.load_days(tmp_path)[0]["papers"]]
+        assert after[:2] == first, "the earlier papers keep their positions"
+        assert len(after) == 4
+
+    def test_append_survives_a_run_that_dies_partway(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "-n", "2"])
+        first = [r["arxiv_id"] for r in digest.load_days(tmp_path)[0]["papers"]]
+
+        def broke(p, **kw):
+            raise RateLimitExhausted("tokens per day (TPD): Limit 100000")
+
+        monkeypatch.setattr(cli.agent, "summarize", broke)
+        assert cli.main(["--out-dir", str(tmp_path), "--no-site", "--append", "-n", "2"]) == 1
+        assert [r["arxiv_id"] for r in digest.load_days(tmp_path)[0]["papers"]] == first
+
+    def test_append_on_an_empty_day_is_an_ordinary_run(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        assert cli.main(["--out-dir", str(tmp_path), "--no-site", "--append", "-n", "2"]) == 0
+        assert len(digest.load_days(tmp_path)[0]["papers"]) == 2
+
+    def test_the_markdown_covers_the_whole_day_not_just_the_new_papers(
+        self, wired, monkeypatch
+    ):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "-n", "2"])
+        cli.main(["--out-dir", str(tmp_path), "--no-site", "--append", "-n", "2"])
+        from datetime import date
+
+        text = (tmp_path / f"{date.today().isoformat()}.md").read_text(encoding="utf-8")
+        assert "4 papers, summarized by" in text
+        assert "## 4." in text
