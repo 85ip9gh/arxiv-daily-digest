@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from . import fulltext
 from .arxiv import Paper
-from .llm import LLMConfig, LLMError, complete
+from .llm import LLMConfig, LLMError, RateLimitExhausted, complete
 
 DEFAULT_INTERESTS = (
     "LLM agents and tool use, retrieval, evaluation and benchmarks, "
@@ -312,6 +312,11 @@ def summarize(
                 config=config,
                 system=SYSTEM,
             )
+        except RateLimitExhausted:
+            # Not this paper's fault and not this paper's problem. Flattening it
+            # into "could not summarize 2608.13560" sends the caller off to try
+            # the next nine papers against a wall that is not going to move.
+            raise
         except LLMError:
             fields = None
             break
