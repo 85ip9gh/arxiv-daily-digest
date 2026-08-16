@@ -7,10 +7,17 @@ from datetime import date
 from pathlib import Path
 
 from . import agent, arxiv, digest, site
-from .llm import LLMConfig, LLMError, available_models, check
+from .llm import LLMConfig, LLMError, RateLimitExhausted, available_models, check
 
 DEFAULT_OUT_DIR = Path("digests")
 DEFAULT_SITE_DIR = Path("site")
+
+# Groq's free tier allows 100,000 tokens a day, a number that appears in no
+# response header and only in the body of a 429. Selection costs about 6,000 and
+# each paper about 4,900, so ten papers sit near 55,000 and leave room for the
+# check-failure retries, which re-send a whole paper. Fifteen measured at 79,500
+# clean and went over the cap the moment two papers retried.
+MAX_COUNT = 10
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,7 +25,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="arxiv-digest",
         description="Pick three of the day's new arXiv AI papers and summarize them.",
     )
-    parser.add_argument("-n", "--count", type=int, default=3, help="papers to summarize")
+    parser.add_argument(
+        "-n",
+        "--count",
+        type=int,
+        default=3,
+        help=f"papers to summarize, capped at {MAX_COUNT} by the daily token budget",
+    )
     parser.add_argument(
         "-c",
         "--categories",
@@ -130,6 +143,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"fetch failed: {exc}", file=sys.stderr)
         return 1
 
+    count = min(args.count, MAX_COUNT)
+    if count < args.count:
+        print(
+            f"asked for {args.count} papers, capping at {MAX_COUNT}: more than "
+            f"that does not fit the daily token budget",
+            file=sys.stderr,
+        )
+
     seen = set() if args.repeats else digest.load_seen(args.out_dir)
     candidates = [p for p in fetched.papers if p.arxiv_id not in seen]
     if not candidates:
@@ -142,39 +163,70 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"{len(candidates)} candidates from the last {fetched.hours}h, "
-        f"selecting {args.count} with {config.label}",
+        f"selecting {count} with {config.label}",
         file=sys.stderr,
     )
 
+    # Selection is the one call with no partial answer. Everything after it is
+    # per paper, so a failure there costs one paper rather than the morning.
     try:
         picks = agent.select(
             candidates,
             config=config,
-            count=args.count,
+            count=count,
             interests=args.interests,
             shortlist=args.shortlist,
         )
-        summaries = []
-        for paper, reason in picks:
-            print(f"summarizing {paper.arxiv_id}: {paper.title[:70]}", file=sys.stderr)
+    except LLMError as exc:
+        print(f"model error: {exc}", file=sys.stderr)
+        return 1
+
+    summaries = []
+    dropped = []
+    for index, (paper, reason) in enumerate(picks):
+        print(f"summarizing {paper.arxiv_id}: {paper.title[:70]}", file=sys.stderr)
+        try:
             summary = agent.summarize(
                 paper,
                 config=config,
                 reason=reason,
                 read_body=not args.no_fulltext,
             )
-            flags = [summary.source_label]
-            if not summary.grounded:
-                flags.append("quote unverified")
-            if summary.unverified_numbers:
-                flags.append(
-                    f"{len(summary.unverified_numbers)} figures not in source"
-                )
-            print(f"  {', '.join(flags)}", file=sys.stderr)
-            summaries.append(summary)
-    except LLMError as exc:
-        print(f"model error: {exc}", file=sys.stderr)
+        except RateLimitExhausted as exc:
+            # Every remaining paper would fail on the same wall, so stop asking.
+            print(f"  out of budget: {exc}", file=sys.stderr)
+            dropped.extend(p.arxiv_id for p, _ in picks[index:])
+            break
+        except LLMError as exc:
+            print(f"  skipped: {exc}", file=sys.stderr)
+            dropped.append(paper.arxiv_id)
+            continue
+
+        flags = [summary.source_label]
+        if not summary.grounded:
+            flags.append("quote unverified")
+        if summary.unverified_numbers:
+            flags.append(
+                f"{len(summary.unverified_numbers)} figures not in source"
+            )
+        print(f"  {', '.join(flags)}", file=sys.stderr)
+        summaries.append(summary)
+
+    # A short day beats no day. The whole point of the archive is that a run
+    # either adds to it or leaves it exactly as it was, and returning here with
+    # nothing written is what an empty morning looks like.
+    if not summaries:
+        print(
+            f"no paper could be summarized, leaving {args.out_dir} untouched",
+            file=sys.stderr,
+        )
         return 1
+    if dropped:
+        print(
+            f"publishing {len(summaries)} of {len(picks)} papers, "
+            f"dropped {', '.join(dropped)}",
+            file=sys.stderr,
+        )
 
     today = date.today()
     text = digest.render(summaries, day=today, model_label=config.label)

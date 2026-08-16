@@ -240,9 +240,40 @@ Every step degrades instead of crashing, because nobody watches a 07:00 job.
   says so on the page.
 - No HTML rendering for a paper: falls back to the abstract, and says so.
 - Citation or figures unverifiable after a retry: summary is kept and flagged.
-- Rate limited: waits the provider's own retry-after, up to three times.
-- Model unreachable: exit 1, and the existing site is left exactly as it was.
+- Rate limited for seconds: waits the provider's retry-after, up to three times.
+- Rate limited for longer than two minutes: stops immediately and publishes the
+  papers it already has, rather than napping through a wait it cannot outlast.
+- One paper failing: skipped, and the rest of the day is published without it.
+- Every paper failing: exit 1, and the existing site is left exactly as it was.
 - A corrupt archived day is skipped by the site build rather than failing it.
+
+## The token budget
+
+Groq's free tier allows **100,000 tokens a day**, and that number appears in no
+response header. The headers advertise a 12,000 token per minute allowance and a
+1,000 request per day count, both of which are comfortable. The daily token cap
+only shows up in the body of a 429, which makes it easy to misdiagnose as the
+per-minute limit it is not.
+
+Measured against the real prompts:
+
+| Item | Tokens |
+| --- | --- |
+| Selection, 40 candidates | ~6,000 |
+| Each paper summarized | ~4,900 |
+| Each check-failure retry | +4,900 |
+
+So a day costs roughly `6,000 + 4,900n`, before retries. Three papers is 20,700
+and ten is 55,000, which leaves room for the retries that re-send a whole paper.
+Fifteen measured at 79,500 clean and went over the cap as soon as two papers
+retried, which is why `-n` is capped at ten in `cli.py`.
+
+Two mechanisms keep a run inside this. `TokenWindow` in `llm.py` tracks a 60
+second rolling spend and sleeps before a call that would breach the per-minute
+allowance, so the pacing is planned rather than discovered through 429s. It
+learns the real allowance from `x-ratelimit-limit-tokens`, so a paid tier paces
+itself correctly with no code change. The daily cap cannot be paced around, so
+hitting it stops the run and publishes what is already summarized.
 
 Papers already summarized are recorded in `digests/seen.json` and skipped, so
 the same paper does not lead the digest two days running.
