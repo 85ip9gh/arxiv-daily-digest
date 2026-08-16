@@ -183,3 +183,45 @@ class TestBuild:
             # The only absolute URLs allowed are the arXiv links a reader clicks.
             for url in re.findall(r"https?://[^\s\"']+", page):
                 assert url.startswith("https://arxiv.org/"), url
+
+
+class TestTagline:
+    """The count is read from the archive. A hardcoded one went stale silently."""
+
+    def _days(self, *counts):
+        return [
+            {"date": f"2026-08-{20 - i:02d}", "papers": [{} for _ in range(n)]}
+            for i, n in enumerate(counts)
+        ]
+
+    def test_it_counts_the_papers_actually_published(self):
+        assert "Up to ten new AI papers a day" in site.tagline(self._days(10, 10))
+
+    def test_a_short_day_does_not_drag_the_number_down(self):
+        """A run that loses papers to the token budget is not a change of cadence."""
+        assert "ten" in site.tagline(self._days(7, 10, 10))
+
+    def test_lowering_the_daily_count_is_followed(self):
+        assert "three" in site.tagline(self._days(*([3] * 8)))
+
+    def test_only_the_recent_window_counts(self):
+        old = self._days(*([3] * site.TAGLINE_WINDOW), 10)
+        assert "three" in site.tagline(old)
+
+    def test_a_single_paper_reads_as_singular(self):
+        assert site.tagline(self._days(1)).startswith("One new AI paper a day")
+
+    def test_an_empty_archive_claims_no_number(self):
+        assert site.tagline([]) == f"New AI papers every morning, {site.TAGLINE_TAIL}"
+
+    def test_the_rendered_index_carries_it(self):
+        html = site.render_index(self._days(10, 10))
+        assert "Up to ten new AI papers a day" in html
+        assert "Three new AI papers" not in html
+
+    def test_every_day_page_says_the_same_thing_as_the_index(self, tmp_path):
+        days = self._days(10, 3)
+        site.build(days, tmp_path)
+        blurb = site.tagline(days)
+        for name in ("index.html", "2026-08-20.html", "2026-08-19.html"):
+            assert blurb in (tmp_path / name).read_text(encoding="utf-8")
