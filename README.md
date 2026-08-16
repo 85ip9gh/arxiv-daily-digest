@@ -154,14 +154,20 @@ Live at **https://papers.pesanth.com**.
 bash deploy/install_g7.sh
 ```
 
-Creates a venv, a `systemd` timer at 07:00 America/Halifax with a 15 minute
-spread, and an nginx container serving `site/` read-only under a 64 MB cap,
+Creates a venv, a `systemd` timer at 07:00 America/Halifax with no spread, and
+an nginx container serving `site/` read-only under a 64 MB cap,
 bound to the tailnet address only. Cloudflare Tunnel is the sole public path,
 the same containment every other site on that box uses. Put the API key in
 `/home/pesanth/arxiv-digest/.env` and the timer starts producing days.
 
 The timezone is spelled out in the unit because the server runs on UTC, where
 `07:00` would mean 04:00 in Halifax.
+
+There is deliberately no `RandomizedDelaySec`. A spread start is for fleets that
+would stampede a shared service, and this is one box making one arXiv request.
+All it bought was a publish time that landed anywhere in a 15 minute window, so
+checking at 07:08 could legitimately find yesterday's page. The run takes well
+under a minute, so a fixed start puts the day up by 07:01.
 
 Two edge changes are left out of the script on purpose, because their blast
 radius is the whole zone rather than this app. Both are already done:
