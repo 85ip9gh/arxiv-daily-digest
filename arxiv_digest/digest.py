@@ -48,15 +48,55 @@ def to_record(summary: Summary) -> dict:
     }
 
 
+def day_records(out_dir: Path, day: date) -> list[dict]:
+    """The papers already archived for one day, or an empty list."""
+    path = out_dir / DATA_DIR / f"{day.isoformat()}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    papers = payload.get("papers") if isinstance(payload, dict) else None
+    return papers if isinstance(papers, list) else []
+
+
+def merge_records(existing: list[dict], new: list[dict]) -> list[dict]:
+    """Existing papers first, then the new ones, first mention of an id winning.
+
+    Order matters: a second run of the same day is topping up what is there, so
+    the morning's papers keep their positions and the additions land after them.
+    """
+    merged = list(existing)
+    known = {r.get("arxiv_id") for r in merged}
+    for record in new:
+        if record.get("arxiv_id") not in known:
+            known.add(record.get("arxiv_id"))
+            merged.append(record)
+    return merged
+
+
 def save_day(
-    out_dir: Path, *, day: date, model_label: str, summaries: list[Summary]
+    out_dir: Path,
+    *,
+    day: date,
+    model_label: str,
+    summaries: list[Summary],
+    append: bool = False,
 ) -> Path:
-    """Write one day of the archive. This is what the site is rebuilt from."""
+    """Write one day of the archive. This is what the site is rebuilt from.
+
+    `append` keeps whatever that day already holds. Without it a second run
+    replaces the day outright, and because seen.json filters out the papers the
+    first run covered, the replacement is a different set: topping a day up
+    silently deleted the morning's work.
+    """
+    records = [to_record(s) for s in summaries]
+    if append:
+        records = merge_records(day_records(out_dir, day), records)
     payload = {
         "date": day.isoformat(),
         "model": model_label,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "papers": [to_record(s) for s in summaries],
+        "papers": records,
     }
     data_dir = out_dir / DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -101,67 +141,79 @@ def save_seen(out_dir: Path, seen: set[str], added: list[str]) -> None:
 
 
 def render(summaries: list[Summary], *, day: date, model_label: str) -> str:
+    return render_records(
+        [to_record(s) for s in summaries], day=day, model_label=model_label
+    )
+
+
+def render_records(records: list[dict], *, day: date, model_label: str) -> str:
+    """Render the markdown from archive records rather than live summaries.
+
+    Going through the record shape is what lets an append run write markdown
+    covering the whole day, including the papers an earlier run produced and
+    this process never held as objects.
+    """
+    count = len(records)
+    noun = "paper" if count == 1 else "papers"
     lines = [
         f"# arXiv AI digest, {day.isoformat()}",
         "",
-        f"Three papers, summarized by {model_label}.",
+        f"{count} {noun}, summarized by {model_label}.",
         "",
     ]
 
-    for n, s in enumerate(summaries, start=1):
-        p = s.paper
+    for n, r in enumerate(records, start=1):
         lines += [
-            f"## {n}. {p.title}",
+            f"## {n}. {r['title']}",
             "",
-            f"{p.author_line} | {p.primary_category} | "
-            f"[abstract]({p.abs_url}) | [pdf]({p.pdf_url}) | read: {s.source_label}",
+            f"{r['author_line']} | {r['primary_category']} | "
+            f"[abstract]({r['abs_url']}) | [pdf]({r['pdf_url']}) | "
+            f"read: {r['source_label']}",
             "",
-            f"**Problem.** {s.problem}",
+            f"**Problem.** {r['problem']}",
             "",
-            f"**Approach.** {s.approach}",
+            f"**Approach.** {r['approach']}",
             "",
         ]
-        if s.method_details:
+        if r.get("method_details"):
             lines += ["**Method details.**", ""]
-            lines += [f"- {d}" for d in s.method_details]
+            lines += [f"- {d}" for d in r["method_details"]]
             lines += [""]
-        lines += [f"**Result.** {s.result}", ""]
-        if s.numbers:
+        lines += [f"**Result.** {r['result']}", ""]
+        if r.get("numbers"):
             lines += ["**Numbers.**", ""]
-            lines += [f"- {v}" for v in s.numbers]
+            lines += [f"- {v}" for v in r["numbers"]]
             lines += [""]
-        if s.limitations:
-            lines += [f"**Limitations.** {s.limitations}", ""]
-        lines += [f"**Why it matters.** {s.so_what}", ""]
+        if r.get("limitations"):
+            lines += [f"**Limitations.** {r['limitations']}", ""]
+        lines += [f"**Why it matters.** {r['so_what']}", ""]
 
-        if s.grounded and s.quote:
-            lines += [f"> {s.quote}", ""]
+        if r.get("grounded") and r.get("quote"):
+            lines += [f"> {r['quote']}", ""]
         else:
             lines += [
                 "> Citation check failed. The model could not quote the source "
                 "for its claim, so treat the summary above as unverified.",
                 "",
             ]
-        if s.unverified_numbers:
+        if r.get("unverified_numbers"):
             lines += [
                 "> Figures not found in the source: "
-                f"{', '.join(s.unverified_numbers)}.",
+                f"{', '.join(r['unverified_numbers'])}.",
                 "",
             ]
-        if s.reason:
-            lines += [f"*Picked because:* {s.reason}", ""]
+        if r.get("reason"):
+            lines += [f"*Picked because:* {r['reason']}", ""]
 
     failures = []
-    if any(not s.grounded for s in summaries):
+    ungrounded = sum(1 for r in records if not r.get("grounded"))
+    if ungrounded:
         failures.append(
-            f"{sum(1 for s in summaries if not s.grounded)} of {len(summaries)} "
-            "summaries failed the citation check"
+            f"{ungrounded} of {count} summaries failed the citation check"
         )
-    if any(s.unverified_numbers for s in summaries):
-        failures.append(
-            f"{sum(1 for s in summaries if s.unverified_numbers)} carry figures "
-            "that are not in the source"
-        )
+    stray = sum(1 for r in records if r.get("unverified_numbers"))
+    if stray:
+        failures.append(f"{stray} carry figures that are not in the source")
     if failures:
         lines += ["---", "", ". ".join(failures) + ".", ""]
     return "\n".join(lines).rstrip() + "\n"
