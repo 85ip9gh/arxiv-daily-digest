@@ -303,3 +303,28 @@ class TestSummarize:
             stub([fields("the error rate falls from 18 percent to under 2 percent")]),
         )
         assert agent.summarize(paper(), config=CONFIG, read_body=False).grounded
+
+
+class TestBudgetExhaustionPropagates:
+    """A dead allowance must not be flattened into "this paper failed"."""
+
+    def test_rate_limit_exhausted_escapes_summarize(self, monkeypatch):
+        from arxiv_digest.llm import RateLimitExhausted
+
+        def broke(*a, **kw):
+            raise RateLimitExhausted("tokens per day (TPD): Limit 100000")
+
+        monkeypatch.setattr(agent, "complete", broke)
+        with pytest.raises(RateLimitExhausted):
+            agent.summarize(paper(), config=CONFIG, body="some source text")
+
+    def test_an_ordinary_model_error_still_becomes_a_paper_failure(self, monkeypatch):
+        from arxiv_digest.llm import LLMError, RateLimitExhausted
+
+        def broke(*a, **kw):
+            raise LLMError("returned non-JSON")
+
+        monkeypatch.setattr(agent, "complete", broke)
+        with pytest.raises(LLMError) as caught:
+            agent.summarize(paper(), config=CONFIG, body="some source text")
+        assert not isinstance(caught.value, RateLimitExhausted)
