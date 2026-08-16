@@ -113,3 +113,156 @@ class TestRequestShape:
         seen = self._capture(monkeypatch)
         llm.complete("hi", {"type": "object"}, config=CONFIG, system="be terse")
         assert seen["body"]["messages"][0] == {"role": "system", "content": "be terse"}
+
+
+class FakeClock:
+    """A monotonic clock that only moves when something sleeps."""
+
+    def __init__(self):
+        self.t = 1000.0
+        self.naps = []
+
+    def now(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.naps.append(seconds)
+        self.t += seconds
+
+
+class TestTokenWindow:
+    def test_calls_inside_the_allowance_never_wait(self):
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        window.limit = 12000
+        for _ in range(2):
+            assert window.reserve(4500) == 0.0
+        assert clock.naps == []
+
+    def test_the_call_that_would_break_the_limit_waits_first(self):
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        window.limit = 12000
+        window.reserve(4500)
+        window.reserve(4500)
+        # 9,000 spent, so a third 4,500 would put the minute at 13,500.
+        assert window.reserve(4500) > 0
+        assert clock.naps, "expected a sleep before the third call"
+
+    def test_the_wait_is_only_as_long_as_the_window(self):
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        window.limit = 12000
+        window.reserve(11000)
+        waited = window.reserve(4500)
+        assert 0 < waited <= llm.RATE_WINDOW
+
+    def test_spend_leaves_the_window_after_a_minute(self):
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        window.limit = 12000
+        window.reserve(11000)
+        clock.t += llm.RATE_WINDOW + 1
+        assert window.reserve(11000) == 0.0
+
+    def test_a_request_bigger_than_the_allowance_is_let_through(self):
+        """Otherwise it loops forever. The 429 path is the right owner for this."""
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        window.limit = 12000
+        assert window.reserve(50000) == 0.0
+
+    def test_no_limit_means_no_pacing(self):
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        for _ in range(10):
+            assert window.reserve(99999) == 0.0
+        assert clock.naps == []
+
+    def test_settle_replaces_the_estimate_with_the_real_cost(self):
+        clock = FakeClock()
+        window = llm.TokenWindow(now=clock.now, sleep=clock.sleep)
+        window.limit = 12000
+        window.reserve(4000)
+        window.settle(11500)
+        # The estimate said 4,000 and the truth was 11,500, so the next call waits.
+        assert window.reserve(4000) > 0
+
+
+class TestPacingDefaults:
+    def test_hosted_backend_paces_by_default(self, monkeypatch):
+        for name in ("ARXIV_DIGEST_BACKEND", "ARXIV_DIGEST_TOKENS_PER_MINUTE"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("ARXIV_DIGEST_API_KEY", "test-key")
+        assert LLMConfig.from_env().tokens_per_minute == llm.DEFAULT_TOKENS_PER_MINUTE
+
+    def test_ollama_does_not_pace(self, monkeypatch):
+        monkeypatch.delenv("ARXIV_DIGEST_TOKENS_PER_MINUTE", raising=False)
+        monkeypatch.setenv("ARXIV_DIGEST_BACKEND", "ollama")
+        assert LLMConfig.from_env().tokens_per_minute == 0
+
+    def test_the_retry_budget_stays_small(self):
+        """Pacing is what keeps the run legal. Retries only catch a bad estimate."""
+        assert LLMConfig().rate_limit_retries == 3
+
+    def test_estimate_counts_the_prompt_and_allows_for_the_answer(self):
+        body = {"messages": [{"role": "user", "content": "x" * 4000}]}
+        assert llm._estimate_tokens(body) == 1000 + llm.COMPLETION_ALLOWANCE
+
+
+class FakeResponse:
+    def __init__(self, status_code=429, headers=None, payload=None):
+        self.status_code = status_code
+        self.headers = headers or {}
+        self._payload = payload if payload is not None else {}
+        self.text = json.dumps(self._payload)
+
+    def json(self):
+        return self._payload
+
+
+TPD_BODY = {
+    "error": {
+        "message": (
+            "Rate limit reached for model `llama-3.3-70b-versatile` on tokens "
+            "per day (TPD): Limit 100000, Used 98625, Requested 3586."
+        ),
+        "code": "rate_limit_exceeded",
+    }
+}
+
+
+class TestDailyCapFailsFast:
+    """The daily cap is the failure that actually happens, and it is not a wait."""
+
+    def _post_returning(self, monkeypatch, response, slept):
+        monkeypatch.setattr(llm.requests, "post", lambda *a, **k: response)
+        monkeypatch.setattr(llm.time, "sleep", lambda s: slept.append(s))
+        monkeypatch.setattr(llm._WINDOW, "limit", 0)
+
+    def test_a_half_hour_wait_raises_instead_of_napping(self, monkeypatch):
+        slept = []
+        response = FakeResponse(headers={"retry-after": "1911"}, payload=TPD_BODY)
+        self._post_returning(monkeypatch, response, slept)
+        with pytest.raises(llm.RateLimitExhausted):
+            llm._post("https://example.invalid", {"messages": []}, CONFIG)
+        assert slept == [], "a daily cap must not be slept on"
+
+    def test_the_providers_own_reason_reaches_the_log(self, monkeypatch):
+        slept = []
+        response = FakeResponse(headers={"retry-after": "1911"}, payload=TPD_BODY)
+        self._post_returning(monkeypatch, response, slept)
+        with pytest.raises(llm.RateLimitExhausted, match="tokens per day"):
+            llm._post("https://example.invalid", {"messages": []}, CONFIG)
+
+    def test_a_short_wait_is_still_retried(self, monkeypatch):
+        slept = []
+        response = FakeResponse(headers={"retry-after": "5"}, payload={})
+        self._post_returning(monkeypatch, response, slept)
+        with pytest.raises(llm.LLMError):
+            llm._post("https://example.invalid", {"messages": []}, CONFIG)
+        assert slept == [5.0, 5.0, 5.0], "a per-minute limit is worth waiting out"
+
+    def test_exhaustion_is_an_llm_error_too(self):
+        """Callers that only catch LLMError must not miss it."""
+        assert issubclass(llm.RateLimitExhausted, LLMError)
