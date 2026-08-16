@@ -48,6 +48,56 @@ def test_author_line_truncates_long_lists():
     assert long_list.author_line == "A, B, C and 2 others"
 
 
+class TestWindowWidening:
+    """A Saturday run measured zero papers inside 48 hours and 120 inside 72."""
+
+    def _feed(self, monkeypatch, ages_hours):
+        from datetime import datetime, timedelta, timezone
+
+        from arxiv_digest import arxiv as module
+
+        now = datetime.now(timezone.utc)
+        made = [
+            papers()[0].__class__(
+                **{
+                    **papers()[0].__dict__,
+                    "arxiv_id": f"id{i}",
+                    "published": now - timedelta(hours=age),
+                }
+            )
+            for i, age in enumerate(ages_hours)
+        ]
+
+        class Response:
+            status_code = 200
+            text = "<feed/>"
+
+            def raise_for_status(self):
+                pass
+
+        monkeypatch.setattr(module.requests, "get", lambda *a, **k: Response())
+        monkeypatch.setattr(module, "parse_feed", lambda _: made)
+        return module
+
+    def test_a_full_window_is_left_alone(self, monkeypatch):
+        module = self._feed(monkeypatch, [1] * 20)
+        result = module.fetch_recent(hours=48, min_results=12)
+        assert result.hours == 48
+        assert len(result) == 20
+
+    def test_a_thin_window_widens_until_it_has_enough(self, monkeypatch):
+        module = self._feed(monkeypatch, [60] * 20)
+        result = module.fetch_recent(hours=48, min_results=12)
+        assert result.hours == 96
+        assert len(result) == 20
+
+    def test_widening_stops_at_the_ceiling(self, monkeypatch):
+        module = self._feed(monkeypatch, [400] * 20)
+        result = module.fetch_recent(hours=48, min_results=12, max_hours=168)
+        assert result.hours == 168
+        assert len(result) == 0
+
+
 def test_query_asks_for_newest_first():
     url = build_query(("cs.AI", "cs.LG"), 50)
     assert "cat%3Acs.AI+OR+cat%3Acs.LG" in url

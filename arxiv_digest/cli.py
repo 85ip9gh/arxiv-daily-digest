@@ -57,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-site", action="store_true", help="skip the HTML rebuild"
     )
     parser.add_argument(
+        "--no-fulltext",
+        action="store_true",
+        help="summarize from the abstract only, skipping arXiv's HTML rendering",
+    )
+    parser.add_argument(
         "--repeats",
         action="store_true",
         help="allow papers that appeared in an earlier digest",
@@ -116,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         return _check(config)
 
     try:
-        papers = arxiv.fetch_recent(
+        fetched = arxiv.fetch_recent(
             categories=args.categories,
             hours=args.hours,
             max_results=args.max_results,
@@ -126,17 +131,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     seen = set() if args.repeats else digest.load_seen(args.out_dir)
-    candidates = [p for p in papers if p.arxiv_id not in seen]
+    candidates = [p for p in fetched.papers if p.arxiv_id not in seen]
     if not candidates:
         print(
-            f"no new papers in the last {args.hours}h for "
+            f"no unseen papers in the last {fetched.hours}h for "
             f"{', '.join(args.categories)}",
             file=sys.stderr,
         )
         return 1
 
     print(
-        f"{len(candidates)} candidates, selecting {args.count} with {config.label}",
+        f"{len(candidates)} candidates from the last {fetched.hours}h, "
+        f"selecting {args.count} with {config.label}",
         file=sys.stderr,
     )
 
@@ -151,7 +157,21 @@ def main(argv: list[str] | None = None) -> int:
         summaries = []
         for paper, reason in picks:
             print(f"summarizing {paper.arxiv_id}: {paper.title[:70]}", file=sys.stderr)
-            summaries.append(agent.summarize(paper, config=config, reason=reason))
+            summary = agent.summarize(
+                paper,
+                config=config,
+                reason=reason,
+                read_body=not args.no_fulltext,
+            )
+            flags = [summary.source_label]
+            if not summary.grounded:
+                flags.append("quote unverified")
+            if summary.unverified_numbers:
+                flags.append(
+                    f"{len(summary.unverified_numbers)} figures not in source"
+                )
+            print(f"  {', '.join(flags)}", file=sys.stderr)
+            summaries.append(summary)
     except LLMError as exc:
         print(f"model error: {exc}", file=sys.stderr)
         return 1
