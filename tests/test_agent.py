@@ -87,6 +87,11 @@ class TestQuoteGrounding:
     def test_short_quote_is_rejected_even_when_present(self):
         assert not agent.quote_is_grounded("We show that", ABSTRACT)
 
+    def test_a_five_word_fragment_is_not_evidence(self):
+        # Present in the abstract, and still too thin to earn the chip.
+        assert "requiring a model to quote" in ABSTRACT
+        assert not agent.quote_is_grounded("requiring a model to quote", ABSTRACT)
+
 
 class TestNumberGrounding:
     def test_figures_present_in_the_source_pass(self):
