@@ -18,7 +18,39 @@ from datetime import date
 from pathlib import Path
 
 SITE_TITLE = "arXiv AI digest"
-SITE_TAGLINE = "Three new AI papers a day, read in full where arXiv renders them, and checked against the source."
+TAGLINE_TAIL = (
+    "read in full where arXiv renders them, and checked against the source."
+)
+# How far back the tagline looks when counting. The number is read from the
+# archive rather than written down, because a hardcoded "three" outlived the
+# three paper era by exactly one config change and told every visitor the wrong
+# thing. One short day cannot drag it down, and a deliberate change to the daily
+# count shows up within a week.
+TAGLINE_WINDOW = 7
+
+_NUMBER_WORDS = {
+    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen",
+    16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
+}
+
+
+def tagline(days: list[dict]) -> str:
+    """Describe the daily cadence using what the archive actually contains.
+
+    "Up to" rather than a flat count, because a run that loses a paper to the
+    token budget publishes a short day on purpose.
+    """
+    counts = [len(d.get("papers", [])) for d in days[:TAGLINE_WINDOW]]
+    counts = [c for c in counts if c > 0]
+    if not counts:
+        return f"New AI papers every morning, {TAGLINE_TAIL}"
+    highest = max(counts)
+    if highest == 1:
+        return f"One new AI paper a day, {TAGLINE_TAIL}"
+    word = _NUMBER_WORDS.get(highest, str(highest))
+    return f"Up to {word} new AI papers a day, {TAGLINE_TAIL}"
 
 # Machine-written summaries sitting under a personal domain would compete with
 # that domain's own pages in search results. The site stays publicly readable,
@@ -396,7 +428,7 @@ def _weekday(iso: str) -> str:
         return ""
 
 
-def _page(title: str, body: str, scripts: str) -> str:
+def _page(title: str, body: str, scripts: str, description: str) -> str:
     return (
         "<!doctype html>\n"
         '<html lang="en">\n<head>\n'
@@ -405,7 +437,7 @@ def _page(title: str, body: str, scripts: str) -> str:
         '<meta name="robots" content="noindex">\n'
         '<meta name="color-scheme" content="light dark">\n'
         f"<title>{_e(title)}</title>\n"
-        f'<meta name="description" content="{_e(SITE_TAGLINE)}">\n'
+        f'<meta name="description" content="{_e(description)}">\n'
         f"<style>{STYLE}</style>\n"
         f"<script>{THEME_BOOT}</script>\n"
         "</head>\n<body>\n"
@@ -437,17 +469,18 @@ def _footer(day: dict | None = None, keys: str = "") -> str:
 
 
 def render_index(days: list[dict]) -> str:
+    blurb = tagline(days)
     head = (
         _topbar()
         + '<div class="wrap">\n<header class="masthead">\n'
         '<p class="eyebrow">Daily, 07:00 Atlantic</p>\n'
         f"<h1>{_e(SITE_TITLE)}</h1>\n"
-        f"<p>{_e(SITE_TAGLINE)}</p>\n</header>\n"
+        f"<p>{_e(blurb)}</p>\n</header>\n"
     )
 
     if not days:
         body = head + '<p class="empty">No digests yet.</p>\n' + _footer() + "</div>\n"
-        return _page(SITE_TITLE, body, "")
+        return _page(SITE_TITLE, body, "", blurb)
 
     rows = []
     for day in days:
@@ -484,7 +517,7 @@ def render_index(days: list[dict]) -> str:
         + _footer(keys=" Press <kbd>/</kbd> to filter.")
         + "</div>\n"
     )
-    return _page(SITE_TITLE, body, INDEX_SCRIPT)
+    return _page(SITE_TITLE, body, INDEX_SCRIPT, blurb)
 
 
 def _badges(paper: dict) -> str:
@@ -584,7 +617,16 @@ def _article(index: int, paper: dict) -> str:
     )
 
 
-def render_day(day: dict, *, newer: str | None = None, older: str | None = None) -> str:
+def render_day(
+    day: dict,
+    *,
+    newer: str | None = None,
+    older: str | None = None,
+    blurb: str | None = None,
+) -> str:
+    # The blurb comes from the whole archive so every page says the same thing.
+    # Falling back to this one day keeps render_day usable on its own.
+    blurb = blurb if blurb is not None else tagline([day])
     papers = day.get("papers", [])
     jumps = "".join(
         f'<a class="jump" href="#p{i}">{i}</a>' for i in range(1, len(papers) + 1)
@@ -612,7 +654,7 @@ def render_day(day: dict, *, newer: str | None = None, older: str | None = None)
         + '<div class="wrap">\n<header class="masthead">\n'
         f'<p class="eyebrow">{_e(_weekday(day["date"]))}</p>\n'
         f"<h1>{_e(_long_date(day['date']))}</h1>\n"
-        f"<p>{_e(SITE_TAGLINE)}</p>\n</header>\n"
+        f"<p>{_e(blurb)}</p>\n</header>\n"
         + articles
         + pager
         + _footer(
@@ -622,12 +664,13 @@ def render_day(day: dict, *, newer: str | None = None, older: str | None = None)
         )
         + "</div>\n"
     )
-    return _page(f"{_long_date(day['date'])} | {SITE_TITLE}", body, DAY_SCRIPT)
+    return _page(f"{_long_date(day['date'])} | {SITE_TITLE}", body, DAY_SCRIPT, blurb)
 
 
 def build(days: list[dict], site_dir: Path) -> list[Path]:
     """Write the whole site. Every page is regenerated on every build."""
     site_dir.mkdir(parents=True, exist_ok=True)
+    blurb = tagline(days)
     written = [site_dir / "index.html"]
     (site_dir / "index.html").write_text(render_index(days), encoding="utf-8")
     (site_dir / "robots.txt").write_text(ROBOTS, encoding="utf-8")
@@ -638,6 +681,8 @@ def build(days: list[dict], site_dir: Path) -> list[Path]:
         newer = days[i - 1]["date"] if i > 0 else None
         older = days[i + 1]["date"] if i + 1 < len(days) else None
         path = site_dir / f"{day['date']}.html"
-        path.write_text(render_day(day, newer=newer, older=older), encoding="utf-8")
+        path.write_text(
+            render_day(day, newer=newer, older=older, blurb=blurb), encoding="utf-8"
+        )
         written.append(path)
     return written
