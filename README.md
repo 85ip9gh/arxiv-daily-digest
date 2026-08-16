@@ -154,14 +154,16 @@ Live at **https://papers.pesanth.com**.
 bash deploy/install_g7.sh
 ```
 
-Creates a venv, a `systemd` timer at 07:00 America/Halifax with no spread, and
-an nginx container serving `site/` read-only under a 64 MB cap,
+Creates a venv, a `systemd` timer at 07:00 America/Halifax with no spread
+running ten papers a day, and an nginx container serving `site/` read-only
+under a 64 MB cap,
 bound to the tailnet address only. Cloudflare Tunnel is the sole public path,
 the same containment every other site on that box uses. Put the API key in
 `/home/deploy/arxiv-digest/.env` and the timer starts producing days.
 
 The timezone is spelled out in the unit because the server runs on UTC, where
-`07:00` would mean 04:00 in Halifax.
+`07:00` would mean 04:00 in Halifax. `COUNT=3 bash deploy/install_g7.sh` runs a
+shorter day; see the token budget section for what each paper costs.
 
 There is deliberately no `RandomizedDelaySec`. A spread start is for fleets that
 would stampede a shared service, and this is one box making one arXiv request.
