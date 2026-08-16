@@ -33,9 +33,14 @@ def summary(n: int, *, grounded: bool = True) -> Summary:
         approach="Check the quote.",
         result="Errors fall.",
         so_what="Pipelines stop lying.",
+        limitations="Extraction only.",
+        method_details=("LoRA rank 16", "400 documents"),
+        numbers=("error rate 18 to 2 percent",),
         quote="the error rate falls" if grounded else "",
         reason="has numbers",
         grounded=grounded,
+        unverified_numbers=() if grounded else ("91.7",),
+        read_full_text=True,
     )
 
 
@@ -50,16 +55,27 @@ def test_render_includes_links_and_sections():
     assert "*Picked because:* has numbers" in text
 
 
+def test_technical_sections_are_rendered():
+    text = render([summary(1)], day=date(2026, 8, 15), model_label="m")
+    assert "**Method details.**" in text
+    assert "- LoRA rank 16" in text
+    assert "**Numbers.**" in text
+    assert "**Limitations.** Extraction only." in text
+    assert "read: full text" in text
+
+
 def test_ungrounded_summary_is_flagged_not_hidden():
     text = render([summary(1, grounded=False)], day=date(2026, 8, 15), model_label="m")
     assert "Citation check failed" in text
-    assert "1 of 1 summaries failed the citation check." in text
+    assert "1 of 1 summaries failed the citation check" in text
+    assert "Figures not found in the source: 91.7." in text
     assert "Models invent fields." in text
 
 
 def test_all_grounded_digest_has_no_warning_footer():
     text = render([summary(1), summary(2)], day=date(2026, 8, 15), model_label="m")
     assert "citation check" not in text
+    assert "not in the source" not in text
 
 
 def test_no_long_dashes_in_rendered_output():
@@ -87,6 +103,11 @@ def test_archived_day_carries_everything_the_site_needs(tmp_path):
     assert paper["pdf_url"].endswith("2508.00001v1")
     assert paper["so_what"] == "Pipelines stop lying."
     assert paper["grounded"] is True
+    assert paper["method_details"] == ["LoRA rank 16", "400 documents"]
+    assert paper["numbers"] == ["error rate 18 to 2 percent"]
+    assert paper["limitations"] == "Extraction only."
+    assert paper["unverified_numbers"] == []
+    assert paper["source_label"] == "full text"
 
 
 def test_days_come_back_newest_first(tmp_path):
