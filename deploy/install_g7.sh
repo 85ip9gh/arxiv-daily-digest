@@ -53,6 +53,9 @@ Wants=network-online.target
 Type=oneshot
 User=deploy
 WorkingDirectory=$APP_DIR
+# The box runs on UTC. Without this the digest published on a Halifax evening
+# is dated tomorrow, because date.today() answers in the server's zone.
+Environment=TZ=$TZ_NAME
 EnvironmentFile=$APP_DIR/.env
 ExecStart=$APP_DIR/.venv/bin/python -m arxiv_digest --out-dir $APP_DIR/digests --site-dir $APP_DIR/site
 EOF

@@ -119,13 +119,14 @@ def _normalize(text: str) -> str:
     return " ".join(_WORD.findall(text.lower()))
 
 
-def quote_is_grounded(quote: str, source: str, *, min_words: int = 4) -> bool:
+def quote_is_grounded(quote: str, source: str, *, min_words: int = 6) -> bool:
     """True when the quote really appears in the source.
 
     Compared on lowercased alphanumeric words so that a model's punctuation or
     whitespace differences do not fail an otherwise honest citation. Quotes
-    shorter than `min_words` are rejected: three common words match almost any
-    paper and prove nothing.
+    shorter than `min_words` are rejected. The prompt asks for eight, and a
+    five word fragment matches almost any paper, so it is evidence of nothing
+    while still earning the page's "quote verified" chip.
     """
     normal_quote = _normalize(quote)
     if len(normal_quote.split()) < min_words:
