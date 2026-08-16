@@ -59,57 +59,57 @@ ROBOTS = "User-agent: *\nDisallow: /\n"
 
 STYLE = """
 :root {
-  --ground: #f3f5f8;
+  --ground: #f7f7f5;
   --panel: #ffffff;
-  --ink: #131922;
-  --muted: #5a6472;
-  --faint: #8b94a3;
-  --line: #dde3ea;
-  --line-strong: #c3ccd8;
-  --accent: #1b3fa0;
-  --accent-soft: #e8edfa;
-  --ok: #0f6a4f;
-  --ok-soft: #e2f2ec;
-  --warn: #8c4a12;
-  --warn-soft: #f8ecdf;
-  --shadow: 0 1px 2px rgba(19, 25, 34, .06), 0 8px 24px -18px rgba(19, 25, 34, .5);
-  --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+  --ink: #171717;
+  --muted: #525252;
+  --faint: #6f6f6f;
+  --line: #d8d8d4;
+  --line-strong: #c6c6c1;
+  --accent: #292929;
+  --accent-soft: #ececea;
+  --ok: #1f7a4d;
+  --ok-soft: #e6f1eb;
+  --warn: #8a6410;
+  --warn-soft: #f5ece0;
+  --shadow: 0 0.4rem 1.2rem rgba(17, 17, 19, .04);
+  --display: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground: #0d1117;
-    --panel: #141b24;
-    --ink: #e7ecf3;
-    --muted: #9aa6b6;
-    --faint: #6f7c8d;
-    --line: #222c38;
-    --line-strong: #33404f;
-    --accent: #85a7ff;
-    --accent-soft: #17233a;
-    --ok: #59c4a0;
-    --ok-soft: #10261f;
-    --warn: #d99a58;
-    --warn-soft: #2a1f13;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -18px rgba(0, 0, 0, .9);
+    --ground: #101111;
+    --panel: #181919;
+    --ink: #f1f1ee;
+    --muted: #bebebb;
+    --faint: #999995;
+    --line: #373838;
+    --line-strong: #4a4b4b;
+    --accent: #e6e6e2;
+    --accent-soft: #272828;
+    --ok: #4fbf85;
+    --ok-soft: #16261e;
+    --warn: #d4a029;
+    --warn-soft: #2a2113;
+    --shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, .35);
   }
 }
 :root[data-theme="dark"] {
-  --ground: #0d1117;
-  --panel: #141b24;
-  --ink: #e7ecf3;
-  --muted: #9aa6b6;
-  --faint: #6f7c8d;
-  --line: #222c38;
-  --line-strong: #33404f;
-  --accent: #85a7ff;
-  --accent-soft: #17233a;
-  --ok: #59c4a0;
-  --ok-soft: #10261f;
-  --warn: #d99a58;
-  --warn-soft: #2a1f13;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -18px rgba(0, 0, 0, .9);
+  --ground: #101111;
+  --panel: #181919;
+  --ink: #f1f1ee;
+  --muted: #bebebb;
+  --faint: #999995;
+  --line: #373838;
+  --line-strong: #4a4b4b;
+  --accent: #e6e6e2;
+  --accent-soft: #272828;
+  --ok: #4fbf85;
+  --ok-soft: #16261e;
+  --warn: #d4a029;
+  --warn-soft: #2a2113;
+  --shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, .35);
 }
 
 * { box-sizing: border-box; }
@@ -149,27 +149,28 @@ a:hover { text-decoration-thickness: 2px; }
 .top nav { margin-left: auto; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
 .jump {
   font-family: var(--mono); font-size: .75rem; color: var(--muted);
-  text-decoration: none; padding: .25rem .45rem; border-radius: 3px;
+  text-decoration: none; padding: .25rem .45rem; border-radius: 0.35rem;
 }
 .jump:hover { background: var(--accent-soft); color: var(--accent); }
 
 button.ctl {
   font-family: var(--mono); font-size: .72rem; letter-spacing: .04em;
   color: var(--muted); background: transparent;
-  border: 1px solid var(--line-strong); border-radius: 3px;
+  border: 1px solid var(--line-strong); border-radius: 0.35rem;
   padding: .25rem .5rem; cursor: pointer;
 }
 button.ctl:hover { color: var(--ink); border-color: var(--ink); }
 
 header.masthead { padding: 3rem 0 1.5rem; }
 header.masthead h1 {
-  font-family: var(--display); font-weight: 600; font-size: clamp(1.9rem, 5vw, 2.6rem);
-  line-height: 1.1; margin: 0 0 .6rem; letter-spacing: -.015em; text-wrap: balance;
+  font-family: var(--display); font-weight: 650; font-size: clamp(1.9rem, 5vw, 2.6rem);
+  line-height: 1.06; margin: 0 0 .6rem; letter-spacing: -.045em; text-wrap: balance;
 }
 header.masthead p { margin: 0; color: var(--muted); max-width: 46ch; }
+header.masthead p.eyebrow,
 .eyebrow {
-  font-family: var(--mono); font-size: .74rem; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--faint); margin: 0 0 .75rem;
+  font-family: var(--mono); font-size: .68rem; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 .75rem;
 }
 
 /* Filter ------------------------------------------------------------------ */
@@ -178,7 +179,7 @@ header.masthead p { margin: 0; color: var(--muted); max-width: 46ch; }
   flex: 1 1 16rem; min-width: 0;
   font-family: var(--body); font-size: .95rem; color: var(--ink);
   background: var(--panel); border: 1px solid var(--line-strong);
-  border-radius: 4px; padding: .5rem .7rem;
+  border-radius: 0.35rem; padding: .5rem .7rem;
 }
 .filter input::placeholder { color: var(--faint); }
 .count { font-family: var(--mono); font-size: .76rem; color: var(--muted); white-space: nowrap; }
@@ -209,8 +210,8 @@ header.masthead p { margin: 0; color: var(--muted); max-width: 46ch; }
 
 /* Chips ------------------------------------------------------------------- */
 .chip {
-  font-family: var(--mono); font-size: .68rem; letter-spacing: .04em;
-  padding: .1rem .4rem; border-radius: 3px; white-space: nowrap;
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .04em;
+  padding: .15rem .45rem; border-radius: 999px; white-space: nowrap;
   border: 1px solid var(--line-strong); color: var(--muted);
 }
 .chip.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
@@ -219,7 +220,7 @@ header.masthead p { margin: 0; color: var(--muted); max-width: 46ch; }
 
 /* Paper record ------------------------------------------------------------ */
 article {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 0.6rem;
   box-shadow: var(--shadow); padding: 1.75rem; margin: 0 0 1.5rem;
   scroll-margin-top: 4.5rem;
 }
@@ -228,8 +229,8 @@ article {
   color: var(--faint); text-transform: uppercase; margin: 0 0 .5rem;
 }
 article h2 {
-  font-family: var(--display); font-weight: 600; font-size: 1.42rem; line-height: 1.25;
-  margin: 0 0 .6rem; letter-spacing: -.01em; text-wrap: balance;
+  font-family: var(--display); font-weight: 650; font-size: 1.42rem; line-height: 1.22;
+  margin: 0 0 .6rem; letter-spacing: -.03em; text-wrap: balance;
 }
 article h2 a { color: inherit; text-decoration: none; }
 article h2 a:hover { color: var(--accent); }
