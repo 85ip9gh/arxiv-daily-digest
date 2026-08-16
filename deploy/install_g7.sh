@@ -10,6 +10,10 @@ set -euo pipefail
 APP_DIR=${APP_DIR:-/home/pesanth/arxiv-digest}
 BIND_IP=${BIND_IP:-100.79.13.73}
 PORT=${PORT:-4245}
+# Ten is the cap in cli.py, set by the 100,000 token daily budget. Selection
+# costs ~6,000 tokens and each paper ~4,900, so ten lands near 55,000 and
+# leaves room for the check-failure retries that re-send a whole paper.
+COUNT=${COUNT:-10}
 RUN_AT=${RUN_AT:-07:00}
 TZ_NAME=${TZ_NAME:-America/Halifax}
 CONTAINER=${CONTAINER:-arxiv-digest-web}
@@ -57,7 +61,7 @@ WorkingDirectory=$APP_DIR
 # is dated tomorrow, because date.today() answers in the server's zone.
 Environment=TZ=$TZ_NAME
 EnvironmentFile=$APP_DIR/.env
-ExecStart=$APP_DIR/.venv/bin/python -m arxiv_digest --out-dir $APP_DIR/digests --site-dir $APP_DIR/site
+ExecStart=$APP_DIR/.venv/bin/python -m arxiv_digest -n $COUNT --out-dir $APP_DIR/digests --site-dir $APP_DIR/site
 EOF
 
 sudo tee /etc/systemd/system/arxiv-digest.timer >/dev/null <<EOF
