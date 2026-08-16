@@ -132,6 +132,17 @@ def build_query(categories: tuple[str, ...] | list[str], max_results: int) -> st
     return f"{API_URL}?{urllib.parse.urlencode(params)}"
 
 
+@dataclass(frozen=True)
+class Fetched:
+    """What came back, and how far back the code had to reach to get it."""
+
+    papers: list[Paper]
+    hours: int
+
+    def __len__(self) -> int:
+        return len(self.papers)
+
+
 def fetch_recent(
     *,
     categories: tuple[str, ...] | list[str] = DEFAULT_CATEGORIES,
@@ -139,11 +150,19 @@ def fetch_recent(
     max_results: int = 120,
     timeout: int = DEFAULT_TIMEOUT,
     retries: int = 2,
-) -> list[Paper]:
-    """Fetch papers submitted in the last `hours`, newest first.
+    min_results: int = 12,
+    max_hours: int = 168,
+) -> Fetched:
+    """Fetch recent papers, newest first, widening the window until there are enough.
 
-    The window defaults to 48 hours rather than 24 because arXiv announces on
-    weekdays only. A Monday run with a 24 hour window sees an empty weekend.
+    The window starts at 48 hours rather than 24 because arXiv announces on
+    weekdays only. It widens because that is still not enough: a Saturday run
+    measured zero papers inside 48 hours and 120 inside 72. A digest that
+    silently produces nothing on a quiet weekend is worse than one that reaches
+    back to Thursday and says so, and `seen.json` already stops repeats.
+
+    Widening costs no extra requests. The feed is sorted by submission date, so
+    a wider window is a later cutoff over the response already in hand.
     """
     url = build_query(tuple(categories), max_results)
     last_error: Exception | None = None
@@ -161,6 +180,11 @@ def fetch_recent(
     else:
         raise FetchError(f"arXiv fetch failed after {retries + 1} tries: {last_error}")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    papers = [p for p in parse_feed(response.text) if p.published >= cutoff]
-    return papers
+    everything = parse_feed(response.text)
+    now = datetime.now(timezone.utc)
+    window = hours
+    while True:
+        kept = [p for p in everything if p.published >= now - timedelta(hours=window)]
+        if len(kept) >= min_results or window >= max_hours:
+            return Fetched(kept, window)
+        window = min(window * 2, max_hours)

@@ -10,3 +10,6 @@ venv/
 
 # Generated digests and the seen-paper state are local output, not source.
 digests/
+
+# The published HTML is generated from the archive on every run.
+site/

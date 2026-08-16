@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any
@@ -49,6 +50,7 @@ class LLMConfig:
     # selection prompt carries dozens of abstracts and does not fit in 4k, and
     # a truncated prompt looks exactly like a bad answer from the caller's side.
     num_ctx: int = 8192
+    rate_limit_retries: int = 3
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -88,20 +90,48 @@ class LLMConfig:
 
 
 def _post(url: str, body: dict[str, Any], config: LLMConfig) -> dict[str, Any]:
+    """One call, with the rate limit treated as a wait rather than a failure.
+
+    Free tiers meter tokens per minute, and three papers of body text in quick
+    succession is exactly the shape that trips it. The provider says how long to
+    wait in the 429, so waiting is a correct answer and failing the day is not.
+    """
     headers = {"Content-Type": "application/json"}
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
+
+    for attempt in range(config.rate_limit_retries + 1):
+        try:
+            response = requests.post(
+                url, json=body, headers=headers, timeout=config.timeout
+            )
+        except requests.RequestException as exc:
+            raise LLMError(f"{config.model} call failed: {exc}") from exc
+
+        if response.status_code == 429 and attempt < config.rate_limit_retries:
+            time.sleep(min(_retry_after(response), 90))
+            continue
+        if response.status_code >= 400:
+            raise LLMError(
+                f"{config.model} call failed: HTTP {response.status_code} "
+                f"body={response.text[:200]!r}"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise LLMError(f"{config.model} returned no JSON body") from exc
+
+    raise LLMError(f"{config.model} stayed rate limited after {config.rate_limit_retries} waits")
+
+
+def _retry_after(response) -> float:
+    raw = response.headers.get("retry-after") or response.headers.get(
+        "x-ratelimit-reset-tokens", ""
+    )
     try:
-        response = requests.post(
-            url, json=body, headers=headers, timeout=config.timeout
-        )
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        detail = ""
-        if getattr(exc, "response", None) is not None:
-            detail = f" body={exc.response.text[:200]!r}"
-        raise LLMError(f"{config.model} call failed: {exc}{detail}") from exc
-    return response.json()
+        return max(1.0, float(str(raw).rstrip("s")))
+    except (TypeError, ValueError):
+        return 20.0
 
 
 def _parse_json(content: str, config: LLMConfig) -> dict[str, Any]:

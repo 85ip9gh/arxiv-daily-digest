@@ -34,10 +34,16 @@ def to_record(summary: Summary) -> dict:
         "pdf_url": paper.pdf_url,
         "problem": summary.problem,
         "approach": summary.approach,
+        "method_details": list(summary.method_details),
         "result": summary.result,
+        "numbers": list(summary.numbers),
+        "limitations": summary.limitations,
         "so_what": summary.so_what,
         "quote": summary.quote,
         "grounded": summary.grounded,
+        "unverified_numbers": list(summary.unverified_numbers),
+        "read_full_text": summary.read_full_text,
+        "source_label": summary.source_label,
         "reason": summary.reason,
     }
 
@@ -108,36 +114,56 @@ def render(summaries: list[Summary], *, day: date, model_label: str) -> str:
             f"## {n}. {p.title}",
             "",
             f"{p.author_line} | {p.primary_category} | "
-            f"[abstract]({p.abs_url}) | [pdf]({p.pdf_url})",
+            f"[abstract]({p.abs_url}) | [pdf]({p.pdf_url}) | read: {s.source_label}",
             "",
             f"**Problem.** {s.problem}",
             "",
             f"**Approach.** {s.approach}",
             "",
-            f"**Result.** {s.result}",
-            "",
-            f"**Why it matters.** {s.so_what}",
-            "",
         ]
+        if s.method_details:
+            lines += ["**Method details.**", ""]
+            lines += [f"- {d}" for d in s.method_details]
+            lines += [""]
+        lines += [f"**Result.** {s.result}", ""]
+        if s.numbers:
+            lines += ["**Numbers.**", ""]
+            lines += [f"- {v}" for v in s.numbers]
+            lines += [""]
+        if s.limitations:
+            lines += [f"**Limitations.** {s.limitations}", ""]
+        lines += [f"**Why it matters.** {s.so_what}", ""]
+
         if s.grounded and s.quote:
             lines += [f"> {s.quote}", ""]
         else:
             lines += [
-                "> Citation check failed. The model could not quote the abstract "
+                "> Citation check failed. The model could not quote the source "
                 "for its claim, so treat the summary above as unverified.",
+                "",
+            ]
+        if s.unverified_numbers:
+            lines += [
+                "> Figures not found in the source: "
+                f"{', '.join(s.unverified_numbers)}.",
                 "",
             ]
         if s.reason:
             lines += [f"*Picked because:* {s.reason}", ""]
 
-    unverified = sum(1 for s in summaries if not s.grounded)
-    if unverified:
-        lines += [
-            "---",
-            "",
-            f"{unverified} of {len(summaries)} summaries failed the citation check.",
-            "",
-        ]
+    failures = []
+    if any(not s.grounded for s in summaries):
+        failures.append(
+            f"{sum(1 for s in summaries if not s.grounded)} of {len(summaries)} "
+            "summaries failed the citation check"
+        )
+    if any(s.unverified_numbers for s in summaries):
+        failures.append(
+            f"{sum(1 for s in summaries if s.unverified_numbers)} carry figures "
+            "that are not in the source"
+        )
+    if failures:
+        lines += ["---", "", ". ".join(failures) + ".", ""]
     return "\n".join(lines).rstrip() + "\n"
 
 

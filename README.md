@@ -1,7 +1,7 @@
 # arxiv-daily-digest
 
-Fetches the day's new AI papers from arXiv, picks three worth reading,
-summarizes them with a hosted free-tier model, and publishes the result as a
+Fetches the day's new AI papers from arXiv, picks three worth reading, reads
+each one's body where arXiv renders it, and publishes technical notes as a
 small static site: one page per day, one index you click a date from.
 
 No paid API, no per-run cost. A local model is still supported for anyone who
@@ -13,19 +13,23 @@ cs.AI, cs.LG and cs.CL together post more than a hundred papers on a working
 day. Reading the titles alone is a daily chore, and a summarizer that runs
 unattended at 07:00 is only useful if you can trust what it wrote.
 
-A model asked to summarize a paper it half-recognizes will describe the paper
-it remembers rather than the one in front of it, and that failure is invisible
-in fluent prose. So every summary has to quote the abstract:
+Abstract-only summaries are safe and useless: they restate the marketing
+sentence. Notes worth reading name the architecture, the datasets, the
+baselines and the measured values, and every one of those is a thing a
+summarizer can invent. So the depth comes with two checks.
 
-1. The model returns four short fields plus the fragment its result came from.
-2. The code checks that fragment actually appears in the abstract, compared on
-   lowercased words so punctuation differences do not fail an honest citation.
-3. A quote that fails gets one retry with the failure quoted back.
-4. If it fails again, **the quote is discarded and the summary is marked
-   unverified**, on the page and in the markdown, rather than printed as though
-   it had been checked.
+**The citation.** The model quotes the fragment its result came from, and the
+code checks that fragment appears in the source, compared on lowercased words
+so punctuation differences do not fail an honest quote.
 
-The prose survives either way. The claim to have read the paper does not.
+**The figures.** Every number in the result, the headline figures and the
+method details has to appear in the source text. A plausible benchmark score is
+the easiest thing in the world to write and the hardest to notice. Prose can be
+vague and still honest. A number cannot.
+
+Either failure gets one retry with the specific problem quoted back. If it
+fails again the prose survives, the unverifiable quote is dropped, and the page
+says which check failed instead of presenting the summary as checked.
 
 ## Install
 
@@ -88,6 +92,7 @@ Useful flags:
 | `--hours` | 48 | how far back to look |
 | `--shortlist` | 40 | candidates the selector actually reads |
 | `--interests` | agents, retrieval, evals, small models | what the selector favours |
+| `--no-fulltext` | off | summarize from the abstract only |
 | `--repeats` | off | allow papers from an earlier digest |
 | `--stdout` | off | print instead of writing anything |
 | `--no-site` | off | archive and markdown only |
@@ -98,15 +103,27 @@ Useful flags:
 
 ## The site
 
-Every page is one self-contained HTML file with its CSS inline. No scripts, no
-fonts, no images, nothing fetched at page load, so the whole thing is a
-directory any static server can hand out read-only. It follows the visitor's
-light or dark preference.
+Every page is one self-contained HTML file with its CSS and script inline. No
+external stylesheet, no font file, no image, nothing fetched at page load, so
+the whole thing is a directory any static server hands out read-only. A test
+enforces that: the only absolute URLs allowed on a page are the arXiv links a
+reader clicks.
 
-`index.html` lists every day newest first with its three titles under it. A day
-page carries the four fields, the checked quote, the selector's reason for
-picking each paper, links to the abstract and the pdf, and older/newer
-navigation.
+`index.html` is a dated ledger, newest first, with a live filter over titles,
+categories and dates. A day page reads as a record per paper: problem,
+approach, result and why it matters in the open, with method details, the
+headline figures and the limitations behind disclosures so the morning skim
+stays short without hiding anything.
+
+The checks are visible where they matter, as chips next to the authors:
+`quote verified`, `figures checked`, and what was actually read (`full text` or
+`abstract only`).
+
+Interactive parts, all keyboard reachable: a theme control cycling system,
+light and dark; `/` to focus the filter; `j` and `k` between papers; `,` and
+`.` between days; expand or collapse every disclosure at once; and a copy
+button per paper. Motion is limited to a 140ms hover fade and is dropped
+entirely under `prefers-reduced-motion`.
 
 ## Configuration
 
@@ -162,11 +179,36 @@ readable, it just does not ask to be indexed, because machine-written summaries
 under a personal domain compete in search with that domain's own pages. Delete
 `ROBOTS` in `site.py` to opt back in.
 
-## Four things that are load-bearing
+## Things that are load-bearing
 
 **JSON as the record, HTML as a view.** The site is a pure function of
 `digests/data/*.json`. That is what makes `--rebuild-site` safe and what stops
 a design change from stranding old days in an old layout.
+
+**The body comes from arXiv's HTML rendering**, not the PDF. Most submissions
+since late 2023 have one at `arxiv.org/html/<id>`. References, appendices and
+LaTeXML math markup are stripped, tables are kept because that is where the
+numbers live, and the method and results sections are packed into a 14k
+character budget with no single section allowed more than a third of it. A long
+method section that swallowed the whole allowance would leave a detailed
+mechanism and no measured outcome, which is the wrong half to keep. Papers with
+no rendering fall back to the abstract and say so on the page.
+
+**The window widens when the day is thin.** It starts at 48 hours, because
+arXiv announces on weekdays only, and doubles up to a week until there are
+enough candidates. A Saturday run measured zero papers inside 48 hours and 120
+inside 72. Widening costs no extra request: the feed is sorted by date, so a
+wider window is just a later cutoff over the response already in hand.
+
+**Long dashes are normalized on the way out.** Papers use en dashes for ranges
+and em dashes for asides, and both arrive inside a verbatim quote. The
+substitution happens at the boundary rather than in the prompt, where a model
+would comply unreliably. Neither check is affected, since both compare on words
+and digits rather than punctuation.
+
+**Rate limits are a wait, not a failure.** Free tiers meter tokens per minute,
+and three papers of body text in quick succession is exactly the shape that
+trips it. A 429 is retried on the provider's own `retry-after`.
 
 **The prompt carries the schema on hosted tiers.** Strict JSON schema support
 is uneven across free providers, so the `openai` backend asks for a JSON object
@@ -187,9 +229,12 @@ with a 24 hour window sees an empty weekend.
 Every step degrades instead of crashing, because nobody watches a 07:00 job.
 
 - arXiv unreachable: two retries with a delay, then exit 1 with the reason.
+- A quiet weekend: the window widens to a week before giving up.
 - Selection unusable after a retry: falls back to the three newest papers, and
   says so on the page.
-- Citation unverifiable after a retry: summary is kept and flagged.
+- No HTML rendering for a paper: falls back to the abstract, and says so.
+- Citation or figures unverifiable after a retry: summary is kept and flagged.
+- Rate limited: waits the provider's own retry-after, up to three times.
 - Model unreachable: exit 1, and the existing site is left exactly as it was.
 - A corrupt archived day is skipped by the site build rather than failing it.
 
@@ -202,8 +247,10 @@ the same paper does not lead the digest two days running.
 python -m pytest
 ```
 
-56 tests, no network and no model. The arXiv parser runs against a fixture
-feed, the agent tests replace the model call with canned responses including
-the invented quotes the citation check exists to catch, and the site tests
-cover escaping, the older/newer pager, and the promise that a page fetches
-nothing at load.
+98 tests, no network and no model. The arXiv parser runs against a fixture
+feed, the full-text reader against a fixture rendering, and the agent tests
+replace the model call with canned responses including the invented quotes and
+the invented benchmark scores the two checks exist to catch. The site tests
+cover escaping, the pager, the theme tokens (every token defined on bare
+`:root`, both explicit themes redefining the same set), and the promise that a
+page fetches nothing at load.
