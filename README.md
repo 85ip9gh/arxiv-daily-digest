@@ -109,6 +109,13 @@ the whole thing is a directory any static server hands out read-only. A test
 enforces that: the only absolute URLs allowed on a page are the arXiv links a
 reader clicks.
 
+The tagline under the masthead counts the papers in the archive rather than
+stating a number, because the hardcoded "three" outlived the three paper era by
+exactly one config change and then told every visitor the wrong thing. It reads
+the largest count in the last seven days, so a short day caused by the token
+budget does not misreport the cadence, and a deliberate change to the daily
+count is reflected after one run.
+
 `index.html` is a dated ledger, newest first, with a live filter over titles,
 categories and dates. A day page reads as a record per paper: problem,
 approach, result and why it matters in the open, with method details, the
