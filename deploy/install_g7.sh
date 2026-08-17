@@ -39,7 +39,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
 # Free hosted tier. Get a key at https://console.groq.com/keys
 ARXIV_DIGEST_BACKEND=openai
 ARXIV_DIGEST_API_KEY=
-ARXIV_DIGEST_MODEL=llama-3.3-70b-versatile
+ARXIV_DIGEST_MODEL=openai/gpt-oss-120b
 ARXIV_DIGEST_BASE_URL=https://api.groq.com/openai/v1
 ENVEOF
     chmod 600 "$APP_DIR/.env"
