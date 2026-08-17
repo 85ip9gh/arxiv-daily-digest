@@ -70,6 +70,18 @@ class TestDayPage:
         assert 'href="https://arxiv.org/pdf/2508.00001v1"' in page
         assert "Picked because: has numbers" in page
 
+    def test_the_rank_counts_the_papers_the_day_actually_has(self):
+        """It read "Paper 4 of 3" on a nine-paper day: the total was a constant."""
+        one = day("2026-08-15")
+        assert "Paper 1 of 1" in site.render_day(one)
+
+        three = day("2026-08-15")
+        three["papers"] = three["papers"] * 3
+        page = site.render_day(three)
+        assert "Paper 1 of 3" in page
+        assert "Paper 3 of 3" in page
+        assert "of 1<" not in page
+
     def test_technical_detail_sits_behind_disclosures(self):
         page = site.render_day(day("2026-08-15"))
         assert "<summary>Method details</summary>" in page
