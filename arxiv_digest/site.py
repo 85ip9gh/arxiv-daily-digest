@@ -556,7 +556,7 @@ def _details(title: str, inner: str, *, open_by_default: bool = False) -> str:
     )
 
 
-def _article(index: int, paper: dict) -> str:
+def _article(index: int, paper: dict, total: int) -> str:
     method = "".join(f"<li>{_e(d)}</li>\n" for d in paper.get("method_details") or [])
     figures = "".join(f"<li>{_e(n)}</li>\n" for n in paper.get("numbers") or [])
     stray = paper.get("unverified_numbers") or []
@@ -591,7 +591,7 @@ def _article(index: int, paper: dict) -> str:
 
     return (
         f'<article id="p{index}">\n'
-        f'<p class="rank">Paper {index} of 3</p>\n'
+        f'<p class="rank">Paper {index} of {total}</p>\n'
         f'<h2><a href="{_e(paper.get("abs_url", "#"))}">{_e(paper.get("title", ""))}</a></h2>\n'
         f'<p class="meta"><span class="authors">{_e(paper.get("author_line", ""))}</span> '
         f'&middot; <a href="{_e(paper.get("abs_url", "#"))}">abstract</a> '
@@ -634,7 +634,11 @@ def render_day(
     )
     jumps += '<button class="ctl" id="expand" type="button" data-state="closed">expand all</button>'
 
-    articles = "".join(_article(i, p) for i, p in enumerate(papers, start=1))
+    # The count is the day's own, not a constant. A day publishes as many papers
+    # as survived the checks, which is rarely the number that was asked for.
+    articles = "".join(
+        _article(i, p, len(papers)) for i, p in enumerate(papers, start=1)
+    )
 
     pager = ""
     if newer or older:
