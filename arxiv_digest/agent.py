@@ -302,6 +302,7 @@ def summarize(
 
     prompt = _prompt_for(paper, source, read_full_text)
     last_error = ""
+    failure = ""
     fields = None
 
     for attempt in range(attempts):
@@ -317,8 +318,13 @@ def summarize(
             # into "could not summarize 2608.13560" sends the caller off to try
             # the next nine papers against a wall that is not going to move.
             raise
-        except LLMError:
+        except LLMError as exc:
             fields = None
+            # Keep why. A retired model name or a dead key fails identically on
+            # every paper, and ten lines of "could not summarize" send the
+            # reader looking at the papers instead of at the one HTTP body that
+            # says the model no longer exists.
+            failure = str(exc)
             break
 
         missing = [k for k in REQUIRED_TEXT if not str(fields.get(k, "")).strip()]
@@ -347,7 +353,8 @@ def summarize(
         last_error = ". ".join(problems)
 
     if fields is None:
-        raise LLMError(f"could not summarize {paper.arxiv_id} with {config.label}")
+        detail = f": {failure}" if failure else ""
+        raise LLMError(f"could not summarize {paper.arxiv_id} with {config.label}{detail}")
 
     # The prose survives. The citation and the figures that could not be found
     # are marked on the page rather than presented as checked.
