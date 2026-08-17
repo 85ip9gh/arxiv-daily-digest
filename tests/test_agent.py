@@ -328,3 +328,14 @@ class TestBudgetExhaustionPropagates:
         with pytest.raises(LLMError) as caught:
             agent.summarize(paper(), config=CONFIG, body="some source text")
         assert not isinstance(caught.value, RateLimitExhausted)
+
+    def test_the_reason_survives_into_the_message(self, monkeypatch):
+        """A retired model fails on every paper, so the why has to reach the log."""
+
+        def broke(*a, **kw):
+            raise LLMError("call failed: HTTP 404 body='model_not_found'")
+
+        monkeypatch.setattr(agent, "complete", broke)
+        with pytest.raises(LLMError) as caught:
+            agent.summarize(paper(), config=CONFIG, body="some source text")
+        assert "model_not_found" in str(caught.value)

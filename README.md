@@ -139,7 +139,7 @@ entirely under `prefers-reduced-motion`.
 |---|---|---|
 | `ARXIV_DIGEST_BACKEND` | `openai` | or `ollama` to run locally |
 | `ARXIV_DIGEST_API_KEY` | none | required unless the backend is `ollama` |
-| `ARXIV_DIGEST_MODEL` | `llama-3.3-70b-versatile` | `qwen3:8b` under `ollama` |
+| `ARXIV_DIGEST_MODEL` | `openai/gpt-oss-120b` | `qwen3:8b` under `ollama` |
 | `ARXIV_DIGEST_BASE_URL` | `https://api.groq.com/openai/v1` | `http://localhost:11434` under `ollama` |
 | `ARXIV_DIGEST_TIMEOUT` | 300 | seconds per call |
 | `ARXIV_DIGEST_TEMPERATURE` | 0.2 | |

@@ -24,7 +24,7 @@ from typing import Any
 import requests
 
 DEFAULT_BACKEND = "openai"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
 DEFAULT_OLLAMA_MODEL = "qwen3:8b"
@@ -33,12 +33,12 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 # minute, but a cold model load is the slow part of the first call of the day.
 DEFAULT_TIMEOUT = 300
 
-# Groq's free tier meters 12,000 tokens per minute on llama-3.3-70b-versatile,
-# read off x-ratelimit-limit-tokens. A full-text paper is roughly 4,500 of them,
-# so about two and a half papers fit in a minute and everything past that is a
-# 429. The real limit is learned from the response headers on the first call;
-# this is only the opening guess.
-DEFAULT_TOKENS_PER_MINUTE = 12000
+# Groq's free tier meters 8,000 tokens per minute on openai/gpt-oss-120b, read
+# off x-ratelimit-limit-tokens. A full-text paper is roughly 4,500 of them, so
+# not quite two papers fit in a minute and everything past that is a 429. The
+# real limit is learned from the response headers on the first call; this is
+# only the opening guess, and it moves whenever the model does.
+DEFAULT_TOKENS_PER_MINUTE = 8000
 RATE_WINDOW = 60.0
 # What a summarize call spends beyond its prompt. Deliberately generous: guessing
 # high costs a little wall clock, guessing low costs the day.
