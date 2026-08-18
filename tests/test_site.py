@@ -4,7 +4,23 @@ from pathlib import Path
 from arxiv_digest import site
 
 
-def day(iso: str, *, grounded: bool = True, stray: list | None = None) -> dict:
+def hn_story(n: int = 1) -> dict:
+    return {
+        "hn_id": f"90000{n}",
+        "title": f"Some Team Ships A New Build Tool {n}",
+        "url": f"https://example.com/{n}",
+        "hn_url": f"https://news.ycombinator.com/item?id=90000{n}",
+        "points": 250 + n,
+        "num_comments": 90 + n,
+        "author": "pg",
+        "created": "2026-08-15T10:00:00+00:00",
+        "reason": "directly relevant to platform engineering",
+    }
+
+
+def day(
+    iso: str, *, grounded: bool = True, stray: list | None = None, stories: list | None = None
+) -> dict:
     return {
         "date": iso,
         "model": "llama-3.3-70b-versatile (api.groq.com)",
@@ -32,6 +48,7 @@ def day(iso: str, *, grounded: bool = True, stray: list | None = None) -> dict:
                 "reason": "has numbers",
             }
         ],
+        "stories": stories if stories is not None else [],
     }
 
 
@@ -58,6 +75,23 @@ class TestIndex:
     def test_empty_archive_still_renders(self):
         page = site.render_index([])
         assert "No digests yet." in page
+
+    def test_story_headlines_are_listed_after_papers_with_a_hn_chip(self):
+        page = site.render_index([day("2026-08-15", stories=[hn_story(1)])])
+        assert "Some Team Ships A New Build Tool 1" in page
+        assert '<span class="chip cat">Hacker News</span>' in page
+        paper_pos = page.index("A Small Model That Cites Its Sources")
+        story_pos = page.index("Some Team Ships A New Build Tool 1")
+        assert paper_pos < story_pos
+
+    def test_a_day_with_no_stories_carries_no_hn_chip(self):
+        page = site.render_index([day("2026-08-15")])
+        assert '<span class="chip cat">Hacker News</span>' not in page
+
+    def test_story_titles_are_searchable(self):
+        page = site.render_index([day("2026-08-15", stories=[hn_story(1)])])
+        row = re.search(r'data-text="([^"]+)"', page).group(1)
+        assert "some team ships a new build tool" in row
         assert "<html" in page
 
 
@@ -129,6 +163,39 @@ class TestDayPage:
 
     def test_no_pager_on_a_lone_day(self):
         assert '<nav class="pager">' not in site.render_day(day("2026-08-15"))
+
+
+class TestStoryCards:
+    def test_a_story_renders_title_meta_and_reason(self):
+        page = site.render_day(day("2026-08-15", stories=[hn_story(1)]))
+        assert "Some Team Ships A New Build Tool 1" in page
+        assert 'href="https://example.com/1"' in page
+        assert "251 points" in page
+        assert "91 comments" in page
+        assert 'href="https://news.ycombinator.com/item?id=900001"' in page
+        assert "directly relevant to platform engineering" in page
+
+    def test_story_cards_carry_no_verification_chips(self):
+        """Nothing about a picked story is checked, so nothing claims to be."""
+        page = site.render_day(day("2026-08-15", stories=[hn_story(1)]))
+        story_section = page[page.index('id="h1"') :]
+        assert "quote verified" not in story_section
+        assert "figures checked" not in story_section
+        assert "<blockquote" not in story_section
+
+    def test_stories_are_article_elements_so_jk_navigation_reaches_them(self):
+        page = site.render_day(day("2026-08-15", stories=[hn_story(1), hn_story(2)]))
+        assert page.count("<article") == 3  # one paper, two stories
+
+    def test_a_day_with_no_stories_renders_no_hacker_news_card(self):
+        page = site.render_day(day("2026-08-15"))
+        assert 'id="h1"' not in page
+        assert '<span class="chip cat">Hacker News</span>' not in page
+
+    def test_multiple_stories_are_numbered_against_their_own_total(self):
+        page = site.render_day(day("2026-08-15", stories=[hn_story(1), hn_story(2)]))
+        assert "Hacker News 1 of 2" in page
+        assert "Hacker News 2 of 2" in page
 
 
 class TestThemeTokens:
@@ -225,6 +292,10 @@ class TestTagline:
 
     def test_an_empty_archive_claims_no_number(self):
         assert site.tagline([]) == f"New AI papers every morning, {site.TAGLINE_TAIL}"
+
+    def test_the_tail_mentions_hacker_news_honestly(self):
+        """New real content on the page, so the tagline says so."""
+        assert "hacker news" in site.TAGLINE_TAIL.lower()
 
     def test_the_rendered_index_carries_it(self):
         html = site.render_index(self._days(10, 10))
