@@ -18,10 +18,7 @@ from datetime import date
 from pathlib import Path
 
 SITE_TITLE = "arXiv AI digest"
-TAGLINE_TAIL = (
-    "read in full where arXiv renders them and checked against the source, "
-    "plus a handful of Hacker News stories worth a look each day."
-)
+TAGLINE_TAIL = "read in full where arXiv renders them and checked against the source."
 # How far back the tagline looks when counting. The number is read from the
 # archive rather than written down, because a hardcoded "three" outlived the
 # three paper era by exactly one config change and told every visitor the wrong
@@ -153,6 +150,12 @@ a:hover { text-decoration-thickness: 2px; }
   text-decoration: none; padding: .25rem .45rem; border-radius: 0.35rem;
 }
 .jump:hover { background: var(--accent-soft); color: var(--accent); }
+.tab {
+  font-family: var(--mono); font-size: .75rem; color: var(--muted);
+  text-decoration: none; padding: .3rem .55rem; border-radius: 0.35rem;
+}
+.tab:hover { background: var(--accent-soft); color: var(--accent); }
+.tab.active { color: var(--ink); background: var(--accent-soft); font-weight: 600; }
 
 button.ctl {
   font-family: var(--mono); font-size: .72rem; letter-spacing: .04em;
@@ -269,6 +272,15 @@ details li { margin: .3rem 0; text-wrap: pretty; }
   padding: .3rem 0; border-bottom: 1px dotted var(--line); text-wrap: pretty;
 }
 .figures li:last-child { border-bottom: 0; }
+
+.picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1.1rem; }
+.pick > a {
+  font-family: var(--display); font-weight: 550; font-size: 1.02rem;
+  line-height: 1.4; text-decoration: none; color: var(--ink); text-wrap: pretty;
+}
+.pick > a:hover { color: var(--accent); text-decoration: underline; }
+.pick .meta { font-size: .78rem; margin: .25rem 0 0; }
+.pick .reason { margin: .3rem 0 0; }
 
 blockquote {
   margin: 1.25rem 0 .5rem; padding: .5rem 0 .5rem 1rem;
@@ -449,20 +461,30 @@ def _page(title: str, body: str, scripts: str, description: str) -> str:
     )
 
 
-def _topbar(links: str = "") -> str:
+def _topbar(links: str = "", *, section: str = "papers") -> str:
+    tabs = (
+        f'<a class="tab{" active" if section == "papers" else ""}" '
+        'href="index.html">Papers</a>\n'
+        f'<a class="tab{" active" if section == "hn" else ""}" '
+        'href="hacker-news.html">Hacker News</a>\n'
+    )
     return (
         '<div class="top"><div class="top-inner">\n'
         f'<a class="brand" href="index.html">arXiv <b>digest</b></a>\n'
-        f"<nav>{links}"
+        f"<nav>{tabs}{links}"
         '<button class="ctl" id="theme" type="button">system</button>'
         "</nav>\n</div></div>\n"
     )
 
 
-def _footer(day: dict | None = None, keys: str = "") -> str:
-    lines = [
+def _footer(day: dict | None = None, keys: str = "", *, kind: str = "papers") -> str:
+    first = (
         "Summaries are machine written from the paper text and checked against it."
-    ]
+        if kind == "papers"
+        else "Picks are a title and a one-line reason only, not summarized and "
+        "not checked against a source."
+    )
+    lines = [first]
     if day:
         lines.append(f"Model: {_e(day.get('model', 'unknown'))}.")
         if day.get("generated_at"):
@@ -487,22 +509,15 @@ def render_index(days: list[dict]) -> str:
     rows = []
     for day in days:
         papers = day.get("papers", [])
-        stories = day.get("stories", [])
-        # Papers first, then stories, so a day's ledger entry lists everything
-        # that was published that day in the order it appears on the page.
         titles = "".join(f"<li>{_e(p.get('title', ''))}</li>\n" for p in papers)
-        titles += "".join(f"<li>{_e(s.get('title', ''))}</li>\n" for s in stories)
         cats = []
         for cat in dict.fromkeys(p.get("primary_category", "") for p in papers):
             if cat:
                 cats.append(f'<span class="chip cat">{_e(cat)}</span>')
-        if stories:
-            cats.append('<span class="chip cat">Hacker News</span>')
         haystack = " ".join(
             [day["date"], _long_date(day["date"]), _weekday(day["date"])]
             + [str(p.get("title", "")) for p in papers]
             + [str(p.get("primary_category", "")) for p in papers]
-            + [str(s.get("title", "")) for s in stories]
         ).lower()
         rows.append(
             f'<li data-text="{_e(haystack)}">\n'
@@ -626,32 +641,6 @@ def _article(index: int, paper: dict, total: int) -> str:
     )
 
 
-def _story_card(index: int, story: dict, total: int) -> str:
-    """A picked Hacker News story: title, meta, and the reason it was picked.
-
-    Nothing here was verified, so there is nothing to disclose and no quote
-    to show: unlike a paper record, a one-line reason is not a factual claim
-    about the story's contents. Still an `<article>` element so the existing
-    `j`/`k` navigation, which selects every `article` on the page, walks over
-    stories the same way it walks over papers.
-    """
-    reason = story.get("reason", "")
-    reason_html = (
-        f'<p class="reason">Picked because: {_e(reason)}</p>\n' if reason else ""
-    )
-    return (
-        f'<article id="h{index}">\n'
-        f'<p class="rank">Hacker News {index} of {total}</p>\n'
-        f'<h2><a href="{_e(story.get("url", "#"))}">{_e(story.get("title", ""))}</a></h2>\n'
-        f'<p class="meta">{int(story.get("points", 0))} points '
-        f'&middot; {int(story.get("num_comments", 0))} comments '
-        f'&middot; <a href="{_e(story.get("hn_url", "#"))}">discussion</a></p>\n'
-        '<div class="badges"><span class="chip cat">Hacker News</span></div>\n'
-        + reason_html
-        + "</article>\n"
-    )
-
-
 def render_day(
     day: dict,
     *,
@@ -663,7 +652,6 @@ def render_day(
     # Falling back to this one day keeps render_day usable on its own.
     blurb = blurb if blurb is not None else tagline([day])
     papers = day.get("papers", [])
-    stories = day.get("stories", [])
     jumps = "".join(
         f'<a class="jump" href="#p{i}">{i}</a>' for i in range(1, len(papers) + 1)
     )
@@ -673,9 +661,6 @@ def render_day(
     # as survived the checks, which is rarely the number that was asked for.
     articles = "".join(
         _article(i, p, len(papers)) for i, p in enumerate(papers, start=1)
-    )
-    articles += "".join(
-        _story_card(i, s, len(stories)) for i, s in enumerate(stories, start=1)
     )
 
     pager = ""
@@ -710,12 +695,96 @@ def render_day(
     return _page(f"{_long_date(day['date'])} | {SITE_TITLE}", body, DAY_SCRIPT, blurb)
 
 
+HN_TAGLINE = (
+    "A handful of Hacker News stories worth a look each day: a title and one "
+    "line on why it was picked. Not summarized, and not checked against a "
+    "source, because a one-line reason makes no factual claim to verify."
+)
+
+
+def _pick(story: dict) -> str:
+    """One picked story: title, points and comments, and the reason it earned
+    a slot. Nothing here is a factual claim about the story's contents the way
+    a paper summary is, so there is nothing to verify and nothing to disclose."""
+    reason = story.get("reason", "")
+    reason_html = f'<p class="reason">{_e(reason)}</p>\n' if reason else ""
+    return (
+        '<li class="pick">\n'
+        f'<a href="{_e(story.get("url", "#"))}">{_e(story.get("title", ""))}</a>\n'
+        f'<p class="meta">{int(story.get("points", 0) or 0)} points '
+        f'&middot; {int(story.get("num_comments", 0) or 0)} comments '
+        f'&middot; <a href="{_e(story.get("hn_url", "#"))}">discussion</a></p>\n'
+        + reason_html
+        + "</li>\n"
+    )
+
+
+def render_hn(days: list[dict]) -> str:
+    """The Hacker News tab: every day that had a pick, newest first, each
+    story as a title, its numbers, and the one line explaining the pick.
+
+    A separate page rather than folded into the paper digest, because the two
+    read differently: a paper record is a checked claim, a picked story is
+    not, and mixing them on one page buried the picks under ten long paper
+    write-ups instead of giving them their own place to be skimmed.
+    """
+    head = (
+        _topbar(section="hn")
+        + '<div class="wrap">\n<header class="masthead">\n'
+        '<p class="eyebrow">Daily, 07:00 Atlantic</p>\n'
+        "<h1>Hacker News</h1>\n"
+        f"<p>{_e(HN_TAGLINE)}</p>\n</header>\n"
+    )
+
+    picked = [d for d in days if d.get("stories")]
+    if not picked:
+        body = (
+            head
+            + '<p class="empty">No picks yet.</p>\n'
+            + _footer(kind="hn")
+            + "</div>\n"
+        )
+        return _page(f"Hacker News | {SITE_TITLE}", body, "", HN_TAGLINE)
+
+    rows = []
+    for day in picked:
+        stories = day["stories"]
+        picks = "".join(_pick(s) for s in stories)
+        haystack = " ".join(
+            [day["date"], _long_date(day["date"]), _weekday(day["date"])]
+            + [str(s.get("title", "")) for s in stories]
+        ).lower()
+        rows.append(
+            f'<li data-text="{_e(haystack)}">\n'
+            '<div class="entry">\n'
+            f'<div class="entry-date">{_e(_long_date(day["date"]))}'
+            f"<span>{_e(_weekday(day['date']))}</span></div>\n"
+            f'<ul class="picks">{picks}</ul>\n'
+            "</div>\n</li>\n"
+        )
+
+    body = (
+        head
+        + '<div class="filter">\n'
+        '<input id="filter" type="search" placeholder="Filter by title or date" '
+        'autocomplete="off" aria-label="Filter picks">\n'
+        f'<span class="count" id="count" role="status">{len(picked)} '
+        f'{"day" if len(picked) == 1 else "days"}</span>\n'
+        "</div>\n"
+        f'<ul class="ledger">\n{"".join(rows)}</ul>\n'
+        + _footer(keys=" Press <kbd>/</kbd> to filter.", kind="hn")
+        + "</div>\n"
+    )
+    return _page(f"Hacker News | {SITE_TITLE}", body, INDEX_SCRIPT, HN_TAGLINE)
+
+
 def build(days: list[dict], site_dir: Path) -> list[Path]:
     """Write the whole site. Every page is regenerated on every build."""
     site_dir.mkdir(parents=True, exist_ok=True)
     blurb = tagline(days)
-    written = [site_dir / "index.html"]
+    written = [site_dir / "index.html", site_dir / "hacker-news.html"]
     (site_dir / "index.html").write_text(render_index(days), encoding="utf-8")
+    (site_dir / "hacker-news.html").write_text(render_hn(days), encoding="utf-8")
     (site_dir / "robots.txt").write_text(ROBOTS, encoding="utf-8")
     written.append(site_dir / "robots.txt")
 
