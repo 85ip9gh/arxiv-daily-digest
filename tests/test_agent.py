@@ -4,6 +4,7 @@ import pytest
 
 from arxiv_digest import agent
 from arxiv_digest.arxiv import Paper
+from arxiv_digest.hackernews import Story
 from arxiv_digest.llm import LLMConfig, LLMError
 
 CONFIG = LLMConfig(backend="ollama", model="qwen3:8b")
@@ -31,6 +32,18 @@ def paper(n: int = 0) -> Paper:
         published=datetime(2026, 8, 14, tzinfo=timezone.utc),
         abs_url="https://arxiv.org/abs/2508.00000",
         pdf_url="https://arxiv.org/pdf/2508.00000",
+    )
+
+
+def story(n: int = 0) -> Story:
+    return Story(
+        hn_id=f"90000{n}",
+        title=f"Story {n}",
+        url=f"https://example.com/{n}",
+        points=100 + n,
+        num_comments=10 + n,
+        author="pg",
+        created=datetime(2026, 8, 14, tzinfo=timezone.utc),
     )
 
 
@@ -68,6 +81,13 @@ def stub(responses, calls=None):
         return answer
 
     return fake
+
+
+def test_default_interests_favour_a_working_engineer_over_ml_theory():
+    text = agent.DEFAULT_INTERESTS.lower()
+    for term in ("software engineering", "devops", "agent tooling", "verification"):
+        assert term in text
+    assert "benchmark chasing" in text
 
 
 class TestQuoteGrounding:
@@ -186,6 +206,60 @@ class TestSelect:
         monkeypatch.setattr(agent, "complete", stub([]))
         picks = agent.select([paper(0), paper(1)], config=CONFIG, count=3)
         assert len(picks) == 2
+
+
+class TestSelectStories:
+    """select_stories mirrors select()'s shape: same shortlist, retry and
+    fall back to recency, no summarize step on this side."""
+
+    def test_returns_the_chosen_stories_with_reasons(self, monkeypatch):
+        monkeypatch.setattr(
+            agent,
+            "complete",
+            stub([{"picks": [{"index": 2, "reason": "worth a click"}, {"index": 0, "reason": "relevant"}]}]),
+        )
+        picks = agent.select_stories([story(i) for i in range(10)], config=CONFIG, count=2)
+        assert [s.hn_id for s, _ in picks] == ["900002", "900000"]
+        assert picks[0][1] == "worth a click"
+
+    def test_out_of_range_and_duplicate_indices_trigger_a_retry(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            agent,
+            "complete",
+            stub(
+                [
+                    {"picks": [{"index": 99, "reason": "x"}, {"index": 1, "reason": "y"}, {"index": 1, "reason": "y"}]},
+                    {"picks": [{"index": 3, "reason": "ok"}, {"index": 4, "reason": "ok"}]},
+                ],
+                calls,
+            ),
+        )
+        picks = agent.select_stories([story(i) for i in range(10)], config=CONFIG, count=2)
+        assert [s.hn_id for s, _ in picks] == ["900003", "900004"]
+        assert "rejected" in calls[1]
+
+    def test_falls_back_to_recency_when_the_model_keeps_failing(self, monkeypatch):
+        monkeypatch.setattr(agent, "complete", stub([LLMError("daemon down")]))
+        picks = agent.select_stories([story(i) for i in range(10)], config=CONFIG, count=2)
+        assert [s.hn_id for s, _ in picks] == ["900000", "900001"]
+        assert "recency" in picks[0][1]
+
+    def test_a_thin_day_skips_the_model_entirely(self, monkeypatch):
+        monkeypatch.setattr(agent, "complete", stub([]))
+        picks = agent.select_stories([story(0), story(1)], config=CONFIG, count=3)
+        assert len(picks) == 2
+
+    def test_reason_is_cleaned_of_long_dashes(self, monkeypatch):
+        em = chr(0x2014)
+        monkeypatch.setattr(
+            agent,
+            "complete",
+            stub([{"picks": [{"index": 0, "reason": f"good {em} worth a look"}, {"index": 1, "reason": "fine"}]}]),
+        )
+        picks = agent.select_stories([story(i) for i in range(10)], config=CONFIG, count=2)
+        assert em not in picks[0][1]
+        assert picks[0][1] == "good, worth a look"
 
 
 class TestSummarize:
