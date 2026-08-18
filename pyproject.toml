@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arxiv-daily-digest"
 version = "0.1.0"
-description = "Picks three of the day's new arXiv AI papers and summarizes them with a local model"
+description = "Picks a few of the day's new arXiv AI papers and Hacker News stories and summarizes the papers with a local model"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
