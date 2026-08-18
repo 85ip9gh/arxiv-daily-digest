@@ -11,9 +11,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .agent import Summary
+from .hackernews import Story
 
 DATA_DIR = "data"
 SEEN_FILE = "seen.json"
+SEEN_HN_FILE = "seen-hn.json"
 # Two weeks is long enough that a paper cannot come back through a v2 posting
 # in the same fortnight, and short enough that the file stays small.
 SEEN_LIMIT = 400
@@ -48,28 +50,56 @@ def to_record(summary: Summary) -> dict:
     }
 
 
-def day_records(out_dir: Path, day: date) -> list[dict]:
-    """The papers already archived for one day, or an empty list."""
+def to_story_record(story: Story, reason: str) -> dict:
+    """Flatten one picked Hacker News story into the archive's shape.
+
+    Nothing here is verified because nothing here is a claim: the story is
+    picked, not summarized, so there is no citation or figure to check
+    against a source. The record is just the story's own facts plus the
+    selector's one-line reason.
+    """
+    return {
+        "hn_id": story.hn_id,
+        "title": story.title,
+        "url": story.url,
+        "hn_url": story.hn_url,
+        "points": story.points,
+        "num_comments": story.num_comments,
+        "author": story.author,
+        "created": story.created.isoformat(),
+        "reason": reason,
+    }
+
+
+def day_records(out_dir: Path, day: date, *, key: str = "papers") -> list[dict]:
+    """The records already archived for one day under `key`, or an empty list.
+
+    `key` is `"papers"` or `"stories"`, the two lists a day's payload carries.
+    """
     path = out_dir / DATA_DIR / f"{day.isoformat()}.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
-    papers = payload.get("papers") if isinstance(payload, dict) else None
-    return papers if isinstance(papers, list) else []
+    records = payload.get(key) if isinstance(payload, dict) else None
+    return records if isinstance(records, list) else []
 
 
-def merge_records(existing: list[dict], new: list[dict]) -> list[dict]:
-    """Existing papers first, then the new ones, first mention of an id winning.
+def merge_records(
+    existing: list[dict], new: list[dict], *, id_key: str = "arxiv_id"
+) -> list[dict]:
+    """Existing records first, then the new ones, first mention of an id winning.
 
     Order matters: a second run of the same day is topping up what is there, so
-    the morning's papers keep their positions and the additions land after them.
+    the morning's records keep their positions and the additions land after
+    them. `id_key` is `"arxiv_id"` for papers or `"hn_id"` for stories; the
+    default keeps every existing caller working unchanged.
     """
     merged = list(existing)
-    known = {r.get("arxiv_id") for r in merged}
+    known = {r.get(id_key) for r in merged}
     for record in new:
-        if record.get("arxiv_id") not in known:
-            known.add(record.get("arxiv_id"))
+        if record.get(id_key) not in known:
+            known.add(record.get(id_key))
             merged.append(record)
     return merged
 
@@ -80,6 +110,7 @@ def save_day(
     day: date,
     model_label: str,
     summaries: list[Summary],
+    stories: list[tuple[Story, str]] = (),
     append: bool = False,
 ) -> Path:
     """Write one day of the archive. This is what the site is rebuilt from.
@@ -87,16 +118,26 @@ def save_day(
     `append` keeps whatever that day already holds. Without it a second run
     replaces the day outright, and because seen.json filters out the papers the
     first run covered, the replacement is a different set: topping a day up
-    silently deleted the morning's work.
+    silently deleted the morning's work. The same logic applies to stories
+    against `seen-hn.json`.
     """
     records = [to_record(s) for s in summaries]
+    story_records = [to_story_record(s, reason) for s, reason in stories]
     if append:
-        records = merge_records(day_records(out_dir, day), records)
+        records = merge_records(
+            day_records(out_dir, day, key="papers"), records, id_key="arxiv_id"
+        )
+        story_records = merge_records(
+            day_records(out_dir, day, key="stories"),
+            story_records,
+            id_key="hn_id",
+        )
     payload = {
         "date": day.isoformat(),
         "model": model_label,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "papers": records,
+        "stories": story_records,
     }
     data_dir = out_dir / DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -106,7 +147,12 @@ def save_day(
 
 
 def load_days(out_dir: Path) -> list[dict]:
-    """Every archived day, newest first. Unreadable files are skipped, not fatal."""
+    """Every archived day, newest first. Unreadable files are skipped, not fatal.
+
+    A day counts as real if it carries papers or stories, so a day that came
+    from a Hacker News only run, or an old day with no `"stories"` key at all,
+    both load the same as one that has both.
+    """
     data_dir = out_dir / DATA_DIR
     if not data_dir.is_dir():
         return []
@@ -116,13 +162,15 @@ def load_days(out_dir: Path) -> list[dict]:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-        if isinstance(payload, dict) and payload.get("date") and payload.get("papers"):
+        if isinstance(payload, dict) and payload.get("date") and (
+            payload.get("papers") or payload.get("stories")
+        ):
             days.append(payload)
     return days
 
 
-def load_seen(out_dir: Path) -> set[str]:
-    path = out_dir / SEEN_FILE
+def load_seen(out_dir: Path, filename: str = SEEN_FILE) -> set[str]:
+    path = out_dir / filename
     if not path.exists():
         return set()
     try:
@@ -131,22 +179,39 @@ def load_seen(out_dir: Path) -> set[str]:
         return set()
 
 
-def save_seen(out_dir: Path, seen: set[str], added: list[str]) -> None:
+def save_seen(
+    out_dir: Path, seen: set[str], added: list[str], filename: str = SEEN_FILE
+) -> None:
     """Keep insertion order so the oldest ids fall off the end first."""
     ordered = [i for i in added if i not in seen] + sorted(seen)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / SEEN_FILE).write_text(
+    (out_dir / filename).write_text(
         json.dumps(ordered[:SEEN_LIMIT], indent=0), encoding="utf-8"
     )
 
 
-def render(summaries: list[Summary], *, day: date, model_label: str) -> str:
+def render(
+    summaries: list[Summary],
+    *,
+    day: date,
+    model_label: str,
+    stories: list[tuple[Story, str]] = (),
+) -> str:
     return render_records(
-        [to_record(s) for s in summaries], day=day, model_label=model_label
+        [to_record(s) for s in summaries],
+        day=day,
+        model_label=model_label,
+        stories=[to_story_record(s, reason) for s, reason in stories],
     )
 
 
-def render_records(records: list[dict], *, day: date, model_label: str) -> str:
+def _plural(n: int, singular: str, plural: str | None = None) -> str:
+    return singular if n == 1 else (plural or f"{singular}s")
+
+
+def render_records(
+    records: list[dict], *, day: date, model_label: str, stories: list[dict] = ()
+) -> str:
     """Render the markdown from archive records rather than live summaries.
 
     Going through the record shape is what lets an append run write markdown
@@ -154,11 +219,28 @@ def render_records(records: list[dict], *, day: date, model_label: str) -> str:
     this process never held as objects.
     """
     count = len(records)
-    noun = "paper" if count == 1 else "papers"
+    story_count = len(stories)
+    noun_paper = _plural(count, "paper")
+    noun_story = _plural(story_count, "story", "stories")
+
+    if count and story_count:
+        summary_line = (
+            f"{count} {noun_paper} summarized, and {story_count} Hacker News "
+            f"{noun_story} picked, by {model_label}."
+        )
+    elif count:
+        summary_line = f"{count} {noun_paper}, summarized by {model_label}."
+    elif story_count:
+        summary_line = (
+            f"{story_count} Hacker News {noun_story}, picked by {model_label}."
+        )
+    else:
+        summary_line = f"Nothing published, by {model_label}."
+
     lines = [
         f"# arXiv AI digest, {day.isoformat()}",
         "",
-        f"{count} {noun}, summarized by {model_label}.",
+        summary_line,
         "",
     ]
 
@@ -204,6 +286,16 @@ def render_records(records: list[dict], *, day: date, model_label: str) -> str:
             ]
         if r.get("reason"):
             lines += [f"*Picked because:* {r['reason']}", ""]
+
+    if stories:
+        lines += ["## From Hacker News", ""]
+        for s in stories:
+            lines += [
+                f"- [{s['title']}]({s['url']}). {s['points']} points, "
+                f"{s['num_comments']} comments. {s['reason']} "
+                f"[Discussion]({s['hn_url']}).",
+            ]
+        lines += [""]
 
     failures = []
     ungrounded = sum(1 for r in records if not r.get("grounded"))
