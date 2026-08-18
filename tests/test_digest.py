@@ -3,15 +3,31 @@ from datetime import date, datetime, timezone
 from arxiv_digest.agent import Summary
 from arxiv_digest.arxiv import Paper
 from arxiv_digest.digest import (
+    SEEN_HN_FILE,
+    day_records,
     load_days,
     load_seen,
+    merge_records,
     render,
     save_day,
     save_seen,
     write_digest,
 )
+from arxiv_digest.hackernews import Story
 
 LONG_DASHES = (chr(0x2014), chr(0x2013))
+
+
+def story(n: int = 1) -> Story:
+    return Story(
+        hn_id=f"90000{n}",
+        title=f"Story {n}",
+        url=f"https://example.com/{n}",
+        points=100 + n,
+        num_comments=10 + n,
+        author="pg",
+        created=datetime(2026, 8, 15, tzinfo=timezone.utc),
+    )
 
 
 def summary(n: int, *, grounded: bool = True) -> Summary:
@@ -149,3 +165,167 @@ def test_seen_is_capped(tmp_path):
     saved = load_seen(tmp_path)
     assert len(saved) == digest_module.SEEN_LIMIT
     assert "fresh" in saved
+
+
+class TestSeenHnFile:
+    """A second, separate seen file so paper and story dedup never collide."""
+
+    def test_hn_seen_is_a_different_file_from_paper_seen(self, tmp_path):
+        save_seen(tmp_path, set(), ["900001"], filename=SEEN_HN_FILE)
+        assert load_seen(tmp_path) == set()
+        assert load_seen(tmp_path, filename=SEEN_HN_FILE) == {"900001"}
+        assert (tmp_path / SEEN_HN_FILE).name == "seen-hn.json"
+
+
+class TestStoriesArchive:
+    def test_a_day_with_only_stories_still_loads(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            stories=[(story(1), "worth a click")],
+        )
+        days = load_days(tmp_path)
+        assert len(days) == 1
+        assert days[0]["papers"] == []
+        record = days[0]["stories"][0]
+        assert record["hn_id"] == "900001"
+        assert record["title"] == "Story 1"
+        assert record["url"] == "https://example.com/1"
+        assert record["hn_url"] == "https://news.ycombinator.com/item?id=900001"
+        assert record["points"] == 101
+        assert record["num_comments"] == 11
+        assert record["reason"] == "worth a click"
+
+    def test_a_day_with_papers_and_stories_carries_both(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[summary(1)],
+            stories=[(story(1), "worth a click")],
+        )
+        days = load_days(tmp_path)
+        assert len(days[0]["papers"]) == 1
+        assert len(days[0]["stories"]) == 1
+
+    def test_an_old_day_with_no_stories_key_still_loads(self, tmp_path):
+        """Backward compatibility with archives written before Hacker News existed."""
+        import json
+
+        save_day(tmp_path, day=date(2026, 8, 15), model_label="m", summaries=[summary(1)])
+        path = tmp_path / "data" / "2026-08-15.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        del payload["stories"]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        days = load_days(tmp_path)
+        assert len(days) == 1
+        assert days[0]["papers"][0]["title"] == "Paper 1"
+
+    def test_appending_stories_keeps_the_earlier_ones_in_place(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            stories=[(story(1), "first")],
+        )
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            stories=[(story(2), "second")],
+            append=True,
+        )
+        stories = load_days(tmp_path)[0]["stories"]
+        assert [s["hn_id"] for s in stories] == ["900001", "900002"]
+
+    def test_without_append_a_second_run_replaces_the_days_stories(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            stories=[(story(1), "first")],
+        )
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            stories=[(story(2), "second")],
+        )
+        stories = load_days(tmp_path)[0]["stories"]
+        assert [s["hn_id"] for s in stories] == ["900002"]
+
+
+class TestMergeRecordsIdKey:
+    def test_default_id_key_matches_the_existing_paper_callers(self):
+        merged = merge_records([{"arxiv_id": "a"}], [{"arxiv_id": "a"}, {"arxiv_id": "b"}])
+        assert [r["arxiv_id"] for r in merged] == ["a", "b"]
+
+    def test_an_alternate_id_key_works_for_stories(self):
+        merged = merge_records(
+            [{"hn_id": "1"}], [{"hn_id": "1"}, {"hn_id": "2"}], id_key="hn_id"
+        )
+        assert [r["hn_id"] for r in merged] == ["1", "2"]
+
+
+class TestDayRecordsKey:
+    def test_default_key_reads_papers(self, tmp_path):
+        save_day(tmp_path, day=date(2026, 8, 15), model_label="m", summaries=[summary(1)])
+        records = day_records(tmp_path, date(2026, 8, 15))
+        assert records[0]["title"] == "Paper 1"
+
+    def test_stories_key_reads_stories(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            stories=[(story(1), "worth a click")],
+        )
+        records = day_records(tmp_path, date(2026, 8, 15), key="stories")
+        assert records[0]["hn_id"] == "900001"
+
+
+class TestRenderWithStories:
+    def test_the_hacker_news_section_lists_title_points_and_reason(self):
+        text = render(
+            [summary(1)],
+            day=date(2026, 8, 15),
+            model_label="m",
+            stories=[(story(1), "worth a click")],
+        )
+        assert "## From Hacker News" in text
+        assert "[Story 1](https://example.com/1)" in text
+        assert "101 points, 11 comments" in text
+        assert "worth a click" in text
+        assert "[Discussion](https://news.ycombinator.com/item?id=900001)" in text
+
+    def test_the_summary_line_counts_both_kinds_honestly(self):
+        text = render(
+            [summary(1)],
+            day=date(2026, 8, 15),
+            model_label="m",
+            stories=[(story(1), "worth a click"), (story(2), "also good")],
+        )
+        assert "1 paper summarized, and 2 Hacker News stories picked, by m." in text
+
+    def test_a_stories_only_day_omits_the_paper_summary_line_wording(self):
+        text = render([], day=date(2026, 8, 15), model_label="m", stories=[(story(1), "x")])
+        assert "1 Hacker News story, picked by m." in text
+
+    def test_no_stories_renders_no_hacker_news_section(self):
+        text = render([summary(1)], day=date(2026, 8, 15), model_label="m")
+        assert "From Hacker News" not in text
+
+    def test_no_long_dashes_in_the_hacker_news_section(self):
+        text = render(
+            [], day=date(2026, 8, 15), model_label="m", stories=[(story(1), "x")]
+        )
+        for dash in LONG_DASHES:
+            assert dash not in text

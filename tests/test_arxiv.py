@@ -1,9 +1,16 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from arxiv_digest.arxiv import build_query, parse_feed
+from arxiv_digest.arxiv import DEFAULT_CATEGORIES, build_query, parse_feed
 
 FIXTURE = Path(__file__).parent / "fixtures" / "feed.xml"
+
+
+def test_default_categories_cover_software_engineering_and_infra():
+    """The digest favours a working engineer's reading, not raw ML novelty."""
+    assert "cs.SE" in DEFAULT_CATEGORIES
+    assert "cs.DC" in DEFAULT_CATEGORIES
+    assert set(DEFAULT_CATEGORIES) == {"cs.AI", "cs.LG", "cs.CL", "cs.SE", "cs.DC"}
 
 
 def papers():

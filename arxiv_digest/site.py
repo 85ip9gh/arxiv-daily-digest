@@ -19,7 +19,8 @@ from pathlib import Path
 
 SITE_TITLE = "arXiv AI digest"
 TAGLINE_TAIL = (
-    "read in full where arXiv renders them, and checked against the source."
+    "read in full where arXiv renders them and checked against the source, "
+    "plus a handful of Hacker News stories worth a look each day."
 )
 # How far back the tagline looks when counting. The number is read from the
 # archive rather than written down, because a hardcoded "three" outlived the
@@ -486,15 +487,22 @@ def render_index(days: list[dict]) -> str:
     rows = []
     for day in days:
         papers = day.get("papers", [])
+        stories = day.get("stories", [])
+        # Papers first, then stories, so a day's ledger entry lists everything
+        # that was published that day in the order it appears on the page.
         titles = "".join(f"<li>{_e(p.get('title', ''))}</li>\n" for p in papers)
+        titles += "".join(f"<li>{_e(s.get('title', ''))}</li>\n" for s in stories)
         cats = []
         for cat in dict.fromkeys(p.get("primary_category", "") for p in papers):
             if cat:
                 cats.append(f'<span class="chip cat">{_e(cat)}</span>')
+        if stories:
+            cats.append('<span class="chip cat">Hacker News</span>')
         haystack = " ".join(
             [day["date"], _long_date(day["date"]), _weekday(day["date"])]
             + [str(p.get("title", "")) for p in papers]
             + [str(p.get("primary_category", "")) for p in papers]
+            + [str(s.get("title", "")) for s in stories]
         ).lower()
         rows.append(
             f'<li data-text="{_e(haystack)}">\n'
@@ -618,6 +626,32 @@ def _article(index: int, paper: dict, total: int) -> str:
     )
 
 
+def _story_card(index: int, story: dict, total: int) -> str:
+    """A picked Hacker News story: title, meta, and the reason it was picked.
+
+    Nothing here was verified, so there is nothing to disclose and no quote
+    to show: unlike a paper record, a one-line reason is not a factual claim
+    about the story's contents. Still an `<article>` element so the existing
+    `j`/`k` navigation, which selects every `article` on the page, walks over
+    stories the same way it walks over papers.
+    """
+    reason = story.get("reason", "")
+    reason_html = (
+        f'<p class="reason">Picked because: {_e(reason)}</p>\n' if reason else ""
+    )
+    return (
+        f'<article id="h{index}">\n'
+        f'<p class="rank">Hacker News {index} of {total}</p>\n'
+        f'<h2><a href="{_e(story.get("url", "#"))}">{_e(story.get("title", ""))}</a></h2>\n'
+        f'<p class="meta">{int(story.get("points", 0))} points '
+        f'&middot; {int(story.get("num_comments", 0))} comments '
+        f'&middot; <a href="{_e(story.get("hn_url", "#"))}">discussion</a></p>\n'
+        '<div class="badges"><span class="chip cat">Hacker News</span></div>\n'
+        + reason_html
+        + "</article>\n"
+    )
+
+
 def render_day(
     day: dict,
     *,
@@ -629,6 +663,7 @@ def render_day(
     # Falling back to this one day keeps render_day usable on its own.
     blurb = blurb if blurb is not None else tagline([day])
     papers = day.get("papers", [])
+    stories = day.get("stories", [])
     jumps = "".join(
         f'<a class="jump" href="#p{i}">{i}</a>' for i in range(1, len(papers) + 1)
     )
@@ -638,6 +673,9 @@ def render_day(
     # as survived the checks, which is rarely the number that was asked for.
     articles = "".join(
         _article(i, p, len(papers)) for i, p in enumerate(papers, start=1)
+    )
+    articles += "".join(
+        _story_card(i, s, len(stories)) for i, s in enumerate(stories, start=1)
     )
 
     pager = ""

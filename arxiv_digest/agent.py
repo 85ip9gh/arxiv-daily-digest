@@ -17,6 +17,10 @@ invisible in fluent prose but obvious in a string comparison.
 appear in the source text. Detail is exactly where a summarizer invents: a
 plausible benchmark score is the easiest thing in the world to write and the
 hardest to notice. Prose can be vague and still be honest. A number cannot.
+
+Hacker News gets a lighter touch: `select_stories` just picks and gives one
+reason each, no summary and nothing to verify, because a one-line reason is
+not a factual claim about the story's contents that needs a citation.
 """
 from __future__ import annotations
 
@@ -25,12 +29,21 @@ from dataclasses import dataclass
 
 from . import fulltext
 from .arxiv import Paper
+from .hackernews import Story
 from .llm import LLMConfig, LLMError, RateLimitExhausted, complete
 
 DEFAULT_INTERESTS = (
-    "LLM agents and tool use, retrieval, evaluation and benchmarks, "
-    "efficient inference on small or local models, and results an engineer "
-    "could apply rather than pure theory"
+    "full stack and platform software engineering practice, DevOps and "
+    "cloud or infrastructure automation, LLM agent tooling and "
+    "verification, self hosted infrastructure, and results a working "
+    "engineer could apply, over pure ML theory or benchmark chasing"
+)
+
+DEFAULT_HN_INTERESTS = (
+    "software engineering practice, DevOps and cloud infrastructure, the "
+    "tech job market, notable AI industry and product news, and self "
+    "hosted and developer tooling, weighted away from startup fundraising "
+    "news, celebrity tech drama, and language or framework holy wars"
 )
 
 SELECT_SCHEMA = {
@@ -244,6 +257,88 @@ def select(
         )
 
     return [(p, "picked by recency, the model's selection was unusable") for p in papers[:count]]
+
+
+HN_SYSTEM = (
+    "You are a technically literate software engineer scanning Hacker News "
+    "for a colleague who wants to know what is worth a click today. You "
+    "favour substance over noise and say in one plain sentence why a story "
+    "earns a slot. Never use em-dashes."
+)
+
+
+def _hn_candidate_block(stories: list[Story]) -> str:
+    lines = []
+    for i, story in enumerate(stories):
+        lines.append(
+            f"[{i}] {story.title}\n"
+            f"    points: {story.points}, comments: {story.num_comments}, "
+            f"url: {story.url}"
+        )
+    return "\n\n".join(lines)
+
+
+def select_stories(
+    stories: list[Story],
+    *,
+    config: LLMConfig,
+    count: int = 5,
+    interests: str = DEFAULT_HN_INTERESTS,
+    attempts: int = 2,
+    shortlist: int = 40,
+) -> list[tuple[Story, str]]:
+    """Pick `count` stories and keep the selector's one-line reason for each.
+
+    Mirrors `select()` exactly: same shortlist-then-ask shape, same retry on
+    an unusable answer, same fall back to the newest `count` stories rather
+    than publishing nothing. There is no summarize step on this side, so the
+    one-line reason the model gives for a pick is the entire "why this is
+    interesting" a reader gets, not a preview of a longer write-up.
+    """
+    stories = stories[:shortlist]
+    if len(stories) <= count:
+        return [(s, "only candidate for the day") for s in stories]
+
+    prompt = (
+        f"Here are {len(stories)} stories posted to Hacker News recently.\n\n"
+        f"{_hn_candidate_block(stories)}\n\n"
+        f"Pick the {count} most worth a click for someone interested in: {interests}.\n"
+        f"Prefer substance over noise. Do not pick two stories that make the "
+        f"same point.\n"
+        f"Give each pick's list index and one sentence saying why it earns a slot."
+    )
+
+    last_error = ""
+    for attempt in range(attempts):
+        try:
+            raw = complete(
+                prompt if not last_error else f"{prompt}\n\nYour last answer was rejected: {last_error}",
+                SELECT_SCHEMA,
+                config=config,
+                system=HN_SYSTEM,
+            )
+        except LLMError:
+            break
+
+        chosen: list[tuple[Story, str]] = []
+        seen: set[int] = set()
+        for pick in raw.get("picks", []):
+            try:
+                index = int(pick.get("index"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= index < len(stories) and index not in seen:
+                seen.add(index)
+                chosen.append((stories[index], clean_dashes(str(pick.get("reason", "")).strip())))
+
+        if len(chosen) >= count:
+            return chosen[:count]
+        last_error = (
+            f"you returned {len(chosen)} usable indices, "
+            f"needed {count} distinct integers between 0 and {len(stories) - 1}"
+        )
+
+    return [(s, "picked by recency, the model's selection was unusable") for s in stories[:count]]
 
 
 def _prompt_for(paper: Paper, body: str, read_full_text: bool) -> str:
