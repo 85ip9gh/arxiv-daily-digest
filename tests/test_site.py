@@ -76,23 +76,18 @@ class TestIndex:
         page = site.render_index([])
         assert "No digests yet." in page
 
-    def test_story_headlines_are_listed_after_papers_with_a_hn_chip(self):
+    def test_the_papers_index_never_mentions_stories(self):
+        """Hacker News picks live on their own tab now, not folded into this
+        page, even for a day that has both. Full separation, not a filter."""
         page = site.render_index([day("2026-08-15", stories=[hn_story(1)])])
-        assert "Some Team Ships A New Build Tool 1" in page
-        assert '<span class="chip cat">Hacker News</span>' in page
-        paper_pos = page.index("A Small Model That Cites Its Sources")
-        story_pos = page.index("Some Team Ships A New Build Tool 1")
-        assert paper_pos < story_pos
-
-    def test_a_day_with_no_stories_carries_no_hn_chip(self):
-        page = site.render_index([day("2026-08-15")])
+        assert "Some Team Ships A New Build Tool 1" not in page
         assert '<span class="chip cat">Hacker News</span>' not in page
 
-    def test_story_titles_are_searchable(self):
-        page = site.render_index([day("2026-08-15", stories=[hn_story(1)])])
-        row = re.search(r'data-text="([^"]+)"', page).group(1)
-        assert "some team ships a new build tool" in row
-        assert "<html" in page
+    def test_the_papers_tab_is_marked_active(self):
+        assert 'class="tab active" href="index.html">Papers' in site.render_index([])
+        assert 'class="tab" href="hacker-news.html">Hacker News' in site.render_index(
+            []
+        )
 
 
 class TestDayPage:
@@ -164,10 +159,24 @@ class TestDayPage:
     def test_no_pager_on_a_lone_day(self):
         assert '<nav class="pager">' not in site.render_day(day("2026-08-15"))
 
+    def test_a_day_page_never_mentions_stories(self):
+        """Same separation as the index: a day with picks still renders as a
+        papers-only page, and article-count-based j/k navigation only ever
+        walks papers now that stories have their own tab."""
+        page = site.render_day(day("2026-08-15", stories=[hn_story(1), hn_story(2)]))
+        assert "Some Team Ships A New Build Tool 1" not in page
+        assert '<span class="chip cat">Hacker News</span>' not in page
+        assert page.count("<article") == 1
 
-class TestStoryCards:
-    def test_a_story_renders_title_meta_and_reason(self):
-        page = site.render_day(day("2026-08-15", stories=[hn_story(1)]))
+    def test_the_papers_tab_is_marked_active(self):
+        assert 'class="tab active" href="index.html">Papers' in site.render_day(
+            day("2026-08-15")
+        )
+
+
+class TestHackerNewsPage:
+    def test_a_pick_renders_title_meta_and_reason(self):
+        page = site.render_hn([day("2026-08-15", stories=[hn_story(1)])])
         assert "Some Team Ships A New Build Tool 1" in page
         assert 'href="https://example.com/1"' in page
         assert "251 points" in page
@@ -175,27 +184,52 @@ class TestStoryCards:
         assert 'href="https://news.ycombinator.com/item?id=900001"' in page
         assert "directly relevant to platform engineering" in page
 
-    def test_story_cards_carry_no_verification_chips(self):
-        """Nothing about a picked story is checked, so nothing claims to be."""
-        page = site.render_day(day("2026-08-15", stories=[hn_story(1)]))
-        story_section = page[page.index('id="h1"') :]
-        assert "quote verified" not in story_section
-        assert "figures checked" not in story_section
-        assert "<blockquote" not in story_section
+    def test_a_pick_carries_no_verification_chip(self):
+        """Nothing about a pick is checked, so nothing claims to be."""
+        page = site.render_hn([day("2026-08-15", stories=[hn_story(1)])])
+        assert "quote verified" not in page
+        assert "figures checked" not in page
+        assert "<blockquote" not in page
 
-    def test_stories_are_article_elements_so_jk_navigation_reaches_them(self):
-        page = site.render_day(day("2026-08-15", stories=[hn_story(1), hn_story(2)]))
-        assert page.count("<article") == 3  # one paper, two stories
+    def test_multiple_picks_all_appear(self):
+        page = site.render_hn([day("2026-08-15", stories=[hn_story(1), hn_story(2)])])
+        assert "Some Team Ships A New Build Tool 1" in page
+        assert "Some Team Ships A New Build Tool 2" in page
 
-    def test_a_day_with_no_stories_renders_no_hacker_news_card(self):
-        page = site.render_day(day("2026-08-15"))
-        assert 'id="h1"' not in page
-        assert '<span class="chip cat">Hacker News</span>' not in page
+    def test_days_with_no_picks_are_skipped(self):
+        page = site.render_hn([day("2026-08-15"), day("2026-08-14", stories=[hn_story(1)])])
+        assert "August 15, 2026" not in page
+        assert "August 14, 2026" in page
 
-    def test_multiple_stories_are_numbered_against_their_own_total(self):
-        page = site.render_day(day("2026-08-15", stories=[hn_story(1), hn_story(2)]))
-        assert "Hacker News 1 of 2" in page
-        assert "Hacker News 2 of 2" in page
+    def test_empty_archive_renders_no_picks_yet(self):
+        assert "No picks yet." in site.render_hn([])
+        assert "No picks yet." in site.render_hn([day("2026-08-15")])
+
+    def test_picks_are_searchable_and_filter_ui_is_present(self):
+        page = site.render_hn([day("2026-08-15", stories=[hn_story(1)])])
+        row = re.search(r'data-text="([^"]+)"', page).group(1)
+        assert "some team ships a new build tool" in row
+        assert 'id="filter"' in page
+
+    def test_the_hn_tab_is_marked_active(self):
+        page = site.render_hn([day("2026-08-15", stories=[hn_story(1)])])
+        assert 'class="tab active" href="hacker-news.html">Hacker News' in page
+        assert 'class="tab" href="index.html">Papers' in page
+
+    def test_text_is_escaped_not_injected(self):
+        payload = day("2026-08-15", stories=[hn_story(1)])
+        payload["stories"][0]["title"] = '<script>alert("x")</script>'
+        page = site.render_hn([payload])
+        assert "<script>alert" not in page
+        assert "&lt;script&gt;" in page
+
+    def test_page_fetches_nothing_at_load(self, tmp_path: Path):
+        site.build([day("2026-08-15", stories=[hn_story(1)])], tmp_path)
+        page = (tmp_path / "hacker-news.html").read_text(encoding="utf-8")
+        assert "src=" not in page
+        assert "<link " not in page
+        assert "@import" not in page
+        assert "fetch(" not in page
 
 
 class TestThemeTokens:
@@ -229,8 +263,9 @@ class TestThemeTokens:
 class TestBuild:
     def test_writes_an_index_and_one_page_per_day(self, tmp_path: Path):
         written = site.build([day("2026-08-15"), day("2026-08-14")], tmp_path)
-        assert len(written) == 4
+        assert len(written) == 5
         assert (tmp_path / "index.html").exists()
+        assert (tmp_path / "hacker-news.html").exists()
         assert (tmp_path / "2026-08-15.html").exists()
         assert (tmp_path / "2026-08-14.html").exists()
 
@@ -293,9 +328,10 @@ class TestTagline:
     def test_an_empty_archive_claims_no_number(self):
         assert site.tagline([]) == f"New AI papers every morning, {site.TAGLINE_TAIL}"
 
-    def test_the_tail_mentions_hacker_news_honestly(self):
-        """New real content on the page, so the tagline says so."""
-        assert "hacker news" in site.TAGLINE_TAIL.lower()
+    def test_the_tail_stays_about_papers_only(self):
+        """Hacker News picks moved to their own tab, so the papers tagline
+        does not need to advertise them: the nav link already does."""
+        assert "hacker news" not in site.TAGLINE_TAIL.lower()
 
     def test_the_rendered_index_carries_it(self):
         html = site.render_index(self._days(10, 10))
