@@ -18,7 +18,7 @@ import requests
 API_URL = "http://export.arxiv.org/api/query"
 USER_AGENT = "arxiv-daily-digest/0.1 (https://github.com/85ip9gh/arxiv-daily-digest)"
 
-DEFAULT_CATEGORIES = ("cs.AI", "cs.LG", "cs.CL")
+DEFAULT_CATEGORIES = ("cs.AI", "cs.LG", "cs.CL", "cs.SE", "cs.DC")
 DEFAULT_TIMEOUT = 60
 
 ATOM = "{http://www.w3.org/2005/Atom}"
