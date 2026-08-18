@@ -1,17 +1,20 @@
 # arxiv-daily-digest
 
-Fetches the day's new AI papers from arXiv, picks three worth reading, reads
+Fetches the day's new AI papers from arXiv, picks a few worth reading, reads
 each one's body where arXiv renders it, and publishes technical notes as a
-small static site: one page per day, one index you click a date from.
+small static site: one page per day, one index you click a date from. A
+second, lighter source runs alongside it: a handful of Hacker News stories,
+fetched and picked for the same reader, with no summary or verification step
+since picking a story makes no factual claim that needs checking.
 
 No paid API, no per-run cost. A local model is still supported for anyone who
 would rather nothing left the machine.
 
 ## The problem it solves
 
-cs.AI, cs.LG and cs.CL together post more than a hundred papers on a working
-day. Reading the titles alone is a daily chore, and a summarizer that runs
-unattended at 07:00 is only useful if you can trust what it wrote.
+cs.AI, cs.LG, cs.CL, cs.SE and cs.DC together post more than a hundred papers
+on a working day. Reading the titles alone is a daily chore, and a summarizer
+that runs unattended at 07:00 is only useful if you can trust what it wrote.
 
 Abstract-only summaries are safe and useless: they restate the marketing
 sentence. Notes worth reading name the architecture, the datasets, the
@@ -30,6 +33,26 @@ vague and still honest. A number cannot.
 Either failure gets one retry with the specific problem quoted back. If it
 fails again the prose survives, the unverifiable quote is dropped, and the page
 says which check failed instead of presenting the summary as checked.
+
+The selector's default interests favour a working software engineer's reading
+over raw ML novelty: full stack and platform engineering practice, DevOps and
+infrastructure automation, agent tooling and verification, and results an
+engineer could apply, ahead of pure theory or benchmark chasing. `--interests`
+overrides it.
+
+## Hacker News
+
+A second source, run and published alongside arXiv: the Algolia search API
+finds recent stories above a point floor, and a selector picks a handful with
+a one-line reason each, weighted toward software engineering practice, DevOps
+and cloud infrastructure, the tech job market, and notable AI industry news,
+away from fundraising announcements, celebrity drama and language holy wars.
+
+There is no summarize or verify step on this side. A summary makes factual
+claims that need a citation and a figure check; a one-line reason a story is
+worth a click makes none, so there is nothing to check it against. The two
+sources are independent: either one failing to fetch or pick anything still
+lets the other publish, and the run only fails if both come back empty.
 
 ## Install
 
@@ -88,13 +111,19 @@ Useful flags:
 | Flag | Default | Does |
 |---|---|---|
 | `-n, --count` | 3 | papers to summarize |
-| `-c, --categories` | cs.AI cs.LG cs.CL | arXiv categories to search |
+| `-c, --categories` | cs.AI cs.LG cs.CL cs.SE cs.DC | arXiv categories to search |
 | `--hours` | 48 | how far back to look |
 | `--shortlist` | 40 | candidates the selector actually reads |
-| `--interests` | agents, retrieval, evals, small models | what the selector favours |
+| `--interests` | full stack engineering, DevOps, agent tooling | what the selector favours |
 | `--no-fulltext` | off | summarize from the abstract only |
 | `--repeats` | off | allow papers from an earlier digest |
-| `--append` | off | add to today's archived papers instead of replacing them |
+| `--append` | off | add to today's archived papers and stories instead of replacing them |
+| `--hn-count` | 5 | Hacker News stories to pick, capped at 8 |
+| `--hn-min-points` | 60 | minimum points a story needs to be a candidate |
+| `--hn-hours` | 48 | how far back to look for stories |
+| `--hn-interests` | engineering practice, DevOps, job market, AI news | what the Hacker News selector favours |
+| `--no-hn` | off | skip Hacker News entirely |
+| `--hn-repeats` | off | allow stories from an earlier digest |
 | `--stdout` | off | print instead of writing anything |
 | `--no-site` | off | archive and markdown only |
 | `-o, --out-dir` | `digests` | where the archive lives |
@@ -121,17 +150,21 @@ count is reflected after one run.
 categories and dates. A day page reads as a record per paper: problem,
 approach, result and why it matters in the open, with method details, the
 headline figures and the limitations behind disclosures so the morning skim
-stays short without hiding anything.
+stays short without hiding anything. Picked Hacker News stories sit after the
+papers as smaller cards: title, points and comments, a link to the discussion,
+and the one-line reason it was picked, carrying a `Hacker News` chip so the
+two kinds are easy to tell apart at a glance.
 
 The checks are visible where they matter, as chips next to the authors:
 `quote verified`, `figures checked`, and what was actually read (`full text` or
-`abstract only`).
+`abstract only`). Story cards carry none of these, on purpose: nothing about a
+picked story was checked, so nothing claims to be.
 
 Interactive parts, all keyboard reachable: a theme control cycling system,
-light and dark; `/` to focus the filter; `j` and `k` between papers; `,` and
-`.` between days; expand or collapse every disclosure at once; and a copy
-button per paper. Motion is limited to a 140ms hover fade and is dropped
-entirely under `prefers-reduced-motion`.
+light and dark; `/` to focus the filter; `j` and `k` between records, papers
+and stories alike; `,` and `.` between days; expand or collapse every
+disclosure at once; and a copy button per paper. Motion is limited to a 140ms
+hover fade and is dropped entirely under `prefers-reduced-motion`.
 
 ## Configuration
 
@@ -240,21 +273,37 @@ caller's side.
 **A 48 hour window, not 24.** arXiv announces on weekdays only, so a Monday run
 with a 24 hour window sees an empty weekend.
 
+**Hacker News is picked, not summarized.** A summary makes claims about a
+source's contents that need a citation and a figure check. A one-line reason a
+story is worth a click makes no such claim, so `select_stories` mirrors
+`select()`'s shortlist-then-ask shape with no summarize or verify step behind
+it, and no `webtext` fetch of the linked article's body.
+
 ## Failure behaviour
 
 Every step degrades instead of crashing, because nobody watches a 07:00 job.
+arXiv and Hacker News are independent sources: each is fetched, selected and
+(for arXiv) summarized behind its own error handling, so one source failing
+never blocks the other from publishing.
 
-- arXiv unreachable: two retries with a delay, then exit 1 with the reason.
-- A quiet weekend: the window widens to a week before giving up.
-- Selection unusable after a retry: falls back to the three newest papers, and
-  says so on the page.
+- arXiv unreachable: logged, arXiv contributes nothing, Hacker News still
+  publishes if it has something.
+- Hacker News unreachable or unparseable: logged, Hacker News contributes
+  nothing, arXiv still publishes if it has something.
+- Both sources unreachable or empty: exit 1, and the existing site is left
+  exactly as it was.
+- A quiet weekend on arXiv: the window widens to a week before giving up. The
+  same widening applies to Hacker News's window.
+- arXiv selection unusable after a retry: falls back to the newest papers, and
+  says so on the page. Hacker News selection does the same, falling back to
+  the newest stories.
 - No HTML rendering for a paper: falls back to the abstract, and says so.
 - Citation or figures unverifiable after a retry: summary is kept and flagged.
+  Hacker News stories are never summarized, so there is nothing to flag.
 - Rate limited for seconds: waits the provider's retry-after, up to three times.
 - Rate limited for longer than two minutes: stops immediately and publishes the
   papers it already has, rather than napping through a wait it cannot outlast.
 - One paper failing: skipped, and the rest of the day is published without it.
-- Every paper failing: exit 1, and the existing site is left exactly as it was.
 - A corrupt archived day is skipped by the site build rather than failing it.
 
 ## The token budget
@@ -286,14 +335,21 @@ itself correctly with no code change. The daily cap cannot be paced around, so
 hitting it stops the run and publishes what is already summarized.
 
 Papers already summarized are recorded in `digests/seen.json` and skipped, so
-the same paper does not lead the digest two days running.
+the same paper does not lead the digest two days running. Hacker News stories
+are recorded the same way in `digests/seen-hn.json`, a separate file so a
+paper's arXiv id and a story's HN id can never collide. Hacker News costs one
+selection call and no per-paper summarize or retry, so it barely moves this
+budget; `--hn-count` is capped at `HN_MAX_COUNT` in `cli.py` as a conservative
+starting point pending real measurement once it has run for a while, the same
+way the paper count itself was tuned after the fact rather than decided up
+front.
 
 That filter is also why a second run of the same day needs `--append`. Without
-it the day is rewritten from scratch, and since the first run's papers are now
-in `seen.json` the rewrite picks a different set, deleting the morning's work
-rather than adding to it. With `--append` the existing papers keep their
-positions and the new ones land after them, so a top-up run that dies partway
-can only leave the day the same or longer.
+it the day is rewritten from scratch, and since the first run's papers (and
+stories) are now in the seen files the rewrite picks a different set, deleting
+the morning's work rather than adding to it. With `--append` the existing
+papers and stories keep their positions and the new ones land after them, so
+a top-up run that dies partway can only leave the day the same or longer.
 
 ## Tests
 
@@ -301,10 +357,12 @@ can only leave the day the same or longer.
 python -m pytest
 ```
 
-98 tests, no network and no model. The arXiv parser runs against a fixture
-feed, the full-text reader against a fixture rendering, and the agent tests
-replace the model call with canned responses including the invented quotes and
-the invented benchmark scores the two checks exist to catch. The site tests
-cover escaping, the pager, the theme tokens (every token defined on bare
-`:root`, both explicit themes redefining the same set), and the promise that a
-page fetches nothing at load.
+190 tests, no network and no model. The arXiv parser runs against a fixture
+feed, the full-text reader against a fixture rendering, the Hacker News client
+against canned Algolia responses, and the agent tests replace the model call
+with canned responses including the invented quotes and the invented benchmark
+scores the two checks exist to catch. The site tests cover escaping, the
+pager, the theme tokens (every token defined on bare `:root`, both explicit
+themes redefining the same set), story cards, and the promise that a page
+fetches nothing at load. The CLI tests cover both sources failing
+independently, so one source going down never takes the other with it.
