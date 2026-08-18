@@ -8,9 +8,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from arxiv_digest import agent, arxiv, cli, digest
+from arxiv_digest import arxiv, cli, digest, hackernews
 from arxiv_digest.agent import Summary
 from arxiv_digest.arxiv import Paper
+from arxiv_digest.hackernews import Story
 from arxiv_digest.llm import LLMError, RateLimitExhausted
 
 
@@ -47,9 +48,26 @@ def summary_for(p: Paper) -> Summary:
     )
 
 
+def story(n: int) -> Story:
+    return Story(
+        hn_id=f"90000{n}",
+        title=f"Story {n}",
+        url=f"https://example.com/{n}",
+        points=100 + n,
+        num_comments=10 + n,
+        author="pg",
+        created=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+
+
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    """A run with arXiv and the model replaced, writing into a temp archive."""
+    """A run with arXiv, Hacker News and the model replaced, writing into a
+    temp archive. Hacker News fetches empty by default, so tests that only
+    care about the arXiv path do not have to think about the second source;
+    tests that do can override `hackernews.fetch_recent` and `agent.select_stories`
+    themselves.
+    """
     papers = [paper(n) for n in range(1, 6)]
     monkeypatch.setenv("ARXIV_DIGEST_API_KEY", "test-key")
     monkeypatch.delenv("ARXIV_DIGEST_BACKEND", raising=False)
@@ -58,6 +76,9 @@ def wired(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         cli.agent, "select", lambda cands, **kw: [(p, "picked") for p in cands[: kw["count"]]]
+    )
+    monkeypatch.setattr(
+        hackernews, "fetch_recent", lambda **kw: hackernews.Fetched(stories=[], hours=48)
     )
     return tmp_path, papers
 
@@ -212,3 +233,151 @@ class TestAppend:
         text = (tmp_path / f"{date.today().isoformat()}.md").read_text(encoding="utf-8")
         assert "4 papers, summarized by" in text
         assert "## 4." in text
+
+
+class TestHackerNews:
+    """Hacker News is fetched and picked, never summarized or verified."""
+
+    def _stories(self, n=3):
+        return [story(i) for i in range(1, n + 1)]
+
+    def test_a_run_publishes_stories_alongside_papers(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            hackernews, "fetch_recent", lambda **kw: hackernews.Fetched(stories=self._stories(), hours=48)
+        )
+        monkeypatch.setattr(
+            cli.agent,
+            "select_stories",
+            lambda cands, **kw: [(s, "worth a click") for s in cands[: kw["count"]]],
+        )
+        assert run(tmp_path) == 0
+        day = digest.load_days(tmp_path)[0]
+        assert len(day["papers"]) == 3
+        assert len(day["stories"]) == 3
+        assert day["stories"][0]["reason"] == "worth a click"
+
+    def test_no_hn_skips_the_second_source_entirely(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+
+        def explode(**kw):
+            raise AssertionError("hackernews.fetch_recent must not be called")
+
+        monkeypatch.setattr(hackernews, "fetch_recent", explode)
+        assert run(tmp_path, "--no-hn") == 0
+        assert digest.load_days(tmp_path)[0]["stories"] == []
+
+    def test_hn_count_is_capped(self, wired, monkeypatch, capsys):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            hackernews,
+            "fetch_recent",
+            lambda **kw: hackernews.Fetched(stories=self._stories(20), hours=48),
+        )
+        seen = {}
+        monkeypatch.setattr(
+            cli.agent,
+            "select_stories",
+            lambda cands, **kw: seen.setdefault("count", kw["count"]) and None
+            or [(s, "x") for s in cands[: kw["count"]]],
+        )
+        run(tmp_path, "--hn-count", "20")
+        assert seen["count"] == cli.HN_MAX_COUNT
+        assert f"capping at {cli.HN_MAX_COUNT}" in capsys.readouterr().err
+
+    def test_hn_dedup_uses_its_own_seen_file(self, wired, monkeypatch):
+        """seen-hn.json must be a different file from seen.json, or a paper's
+        arxiv_id colliding with a story's hn_id would wrongly filter it out."""
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            hackernews, "fetch_recent", lambda **kw: hackernews.Fetched(stories=self._stories(2), hours=48)
+        )
+        monkeypatch.setattr(
+            cli.agent,
+            "select_stories",
+            lambda cands, **kw: [(s, "x") for s in cands[: kw["count"]]],
+        )
+        run(tmp_path)
+        assert (tmp_path / digest.SEEN_HN_FILE).exists()
+        assert (tmp_path / digest.SEEN_FILE).exists()
+        hn_seen = digest.load_seen(tmp_path, filename=digest.SEEN_HN_FILE)
+        assert hn_seen == {"900001", "900002"}
+
+    def test_hn_repeats_skips_the_dedup_filter(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            hackernews, "fetch_recent", lambda **kw: hackernews.Fetched(stories=self._stories(1), hours=48)
+        )
+        picked = []
+        monkeypatch.setattr(
+            cli.agent,
+            "select_stories",
+            lambda cands, **kw: picked.append(len(cands)) or [(s, "x") for s in cands[: kw["count"]]],
+        )
+        run(tmp_path)
+        run(tmp_path, "--hn-repeats")
+        # Without --hn-repeats the second run would see zero candidates, since
+        # the one story was already recorded in seen-hn.json by the first run.
+        assert picked[-1] == 1
+
+
+class TestIndependentSourceFailure:
+    """Neither source can take the other down."""
+
+    def test_arxiv_failure_still_lets_hn_publish(self, wired, monkeypatch, capsys):
+        tmp_path, _ = wired
+
+        def broke_fetch(**kw):
+            raise arxiv.FetchError("arXiv is down")
+
+        monkeypatch.setattr(arxiv, "fetch_recent", broke_fetch)
+        monkeypatch.setattr(
+            hackernews,
+            "fetch_recent",
+            lambda **kw: hackernews.Fetched(stories=[story(1)], hours=48),
+        )
+        monkeypatch.setattr(
+            cli.agent,
+            "select_stories",
+            lambda cands, **kw: [(s, "worth a click") for s in cands[: kw["count"]]],
+        )
+        assert run(tmp_path) == 0
+        day = digest.load_days(tmp_path)[0]
+        assert day["papers"] == []
+        assert len(day["stories"]) == 1
+        assert "arxiv: fetch failed" in capsys.readouterr().err
+
+    def test_hn_failure_still_lets_arxiv_publish(self, wired, monkeypatch, capsys):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+
+        def broke_fetch(**kw):
+            raise hackernews.FetchError("hn is down")
+
+        monkeypatch.setattr(hackernews, "fetch_recent", broke_fetch)
+        assert run(tmp_path) == 0
+        day = digest.load_days(tmp_path)[0]
+        assert len(day["papers"]) == 3
+        assert day["stories"] == []
+        assert "hn: fetch failed" in capsys.readouterr().err
+
+    def test_both_sources_failing_is_the_only_thing_that_exits_nonzero(
+        self, wired, monkeypatch
+    ):
+        tmp_path, _ = wired
+
+        def broke_arxiv(**kw):
+            raise arxiv.FetchError("arXiv is down")
+
+        def broke_hn(**kw):
+            raise hackernews.FetchError("hn is down")
+
+        monkeypatch.setattr(arxiv, "fetch_recent", broke_arxiv)
+        monkeypatch.setattr(hackernews, "fetch_recent", broke_hn)
+        assert run(tmp_path) == 1
+        assert digest.load_days(tmp_path) == []
