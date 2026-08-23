@@ -50,10 +50,11 @@ def tagline(days: list[dict]) -> str:
     word = _NUMBER_WORDS.get(highest, str(highest))
     return f"Up to {word} new AI papers a day, {TAGLINE_TAIL}"
 
-# Machine-written summaries sitting under a personal domain would compete with
-# that domain's own pages in search results. The site stays publicly readable,
-# it just does not ask to be indexed. Delete this to opt back in.
-ROBOTS = "User-agent: *\nDisallow: /\n"
+# The site asks to be indexed. It was blocked until 2026-08-23, on the reasoning
+# that machine-written summaries under a personal domain compete in search with
+# that domain's own pages. That was reversed deliberately: being findable is the
+# point of publishing. Swap Allow for Disallow here to opt back out.
+ROBOTS = "User-agent: *\nAllow: /\n"
 
 STYLE = """
 :root {
@@ -448,7 +449,7 @@ def _page(title: str, body: str, scripts: str, description: str) -> str:
         '<html lang="en">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        '<meta name="robots" content="noindex">\n'
+        '<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">\n'
         '<meta name="color-scheme" content="light dark">\n'
         f"<title>{_e(title)}</title>\n"
         f'<meta name="description" content="{_e(description)}">\n'

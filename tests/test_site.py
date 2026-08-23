@@ -269,11 +269,14 @@ class TestBuild:
         assert (tmp_path / "2026-08-15.html").exists()
         assert (tmp_path / "2026-08-14.html").exists()
 
-    def test_the_site_asks_not_to_be_indexed(self, tmp_path: Path):
+    def test_the_site_asks_to_be_indexed(self, tmp_path: Path):
         site.build([day("2026-08-15")], tmp_path)
         assert (tmp_path / "robots.txt").read_text(encoding="utf-8") == (
-            "User-agent: *\nDisallow: /\n"
+            "User-agent: *\nAllow: /\n"
         )
+        page = (tmp_path / "index.html").read_text(encoding="utf-8")
+        assert 'content="noindex"' not in page
+        assert 'name="robots" content="index, follow' in page
 
     def test_newest_day_has_no_newer_link(self, tmp_path: Path):
         site.build([day("2026-08-15"), day("2026-08-14")], tmp_path)

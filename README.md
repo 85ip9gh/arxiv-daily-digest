@@ -223,10 +223,12 @@ radius is the whole zone rather than this app. Both are already done:
 
 Recheck every existing hostname after the restart, not only the new one.
 
-The site ships a `robots.txt` that disallows everything. It stays publicly
-readable, it just does not ask to be indexed, because machine-written summaries
-under a personal domain compete in search with that domain's own pages. Delete
-`ROBOTS` in `site.py` to opt back in.
+The site asks to be indexed: `robots.txt` allows everything and every page
+carries a `robots` meta tag requesting indexing with full snippets. It was
+blocked until 2026-08-23, on the reasoning that machine-written summaries under
+a personal domain compete in search with that domain's own pages. That was
+reversed deliberately, because being findable is the point of publishing. Swap
+`Allow` for `Disallow` in `ROBOTS` in `site.py` to opt back out.
 
 ## Things that are load-bearing
 
