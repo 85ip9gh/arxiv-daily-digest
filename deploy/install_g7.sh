@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the digest on g7-server: a venv, a daily systemd timer, and the
+# Installs the digest on host-b: a venv, a daily systemd timer, and the
 # nginx container the Cloudflare Tunnel points at. Idempotent, safe to re-run.
 #
 # The tunnel ingress rule and the DNS record are deliberately NOT created here.
@@ -7,8 +7,8 @@
 # README.md walks them once.
 set -euo pipefail
 
-APP_DIR=${APP_DIR:-/home/pesanth/arxiv-digest}
-BIND_IP=${BIND_IP:-100.79.13.73}
+APP_DIR=${APP_DIR:-/home/deploy/arxiv-digest}
+BIND_IP=${BIND_IP:-100.100.100.100}
 PORT=${PORT:-4245}
 # Ten is the cap in cli.py, set by the 100,000 token daily budget. Selection
 # costs ~6,000 tokens and each paper ~4,900, so ten lands near 55,000 and
@@ -55,7 +55,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=pesanth
+User=deploy
 WorkingDirectory=$APP_DIR
 # The box runs on UTC. Without this the digest published on a Halifax evening
 # is dated tomorrow, because date.today() answers in the server's zone.

@@ -187,7 +187,7 @@ hover fade and is dropped entirely under `prefers-reduced-motion`.
 Registers a scheduled task at 07:00 logging to `digests\nightly.log`.
 `.\install_nightly.ps1 -Remove` unregisters it.
 
-## Daily run on g7-server, published on the domain
+## Daily run on host-b, published on the domain
 
 Live at **https://papers.pesanth.com**.
 
@@ -200,7 +200,7 @@ running ten papers a day, and an nginx container serving `site/` read-only
 under a 64 MB cap,
 bound to the tailnet address only. Cloudflare Tunnel is the sole public path,
 the same containment every other site on that box uses. Put the API key in
-`/home/pesanth/arxiv-digest/.env` and the timer starts producing days.
+`/home/deploy/arxiv-digest/.env` and the timer starts producing days.
 
 The timezone is spelled out in the unit because the server runs on UTC, where
 `07:00` would mean 04:00 in Halifax. `COUNT=3 bash deploy/install_g7.sh` runs a
@@ -216,7 +216,7 @@ Two edge changes are left out of the script on purpose, because their blast
 radius is the whole zone rather than this app. Both are already done:
 
 1. The hostname in `/etc/cloudflared/config.yml` above the catch-all 404 rule,
-   pointing at `http://100.79.13.73:4245`. Validate before restarting, and note
+   pointing at `http://100.100.100.100:4245`. Validate before restarting, and note
    the flag goes before the subcommand:
    `cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate`.
 2. The DNS record: `cloudflared tunnel route dns <tunnel> <hostname>`.
