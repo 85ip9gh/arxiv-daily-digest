@@ -2,7 +2,9 @@ from datetime import date, datetime, timezone
 
 from arxiv_digest.agent import Summary
 from arxiv_digest.arxiv import Paper
+from arxiv_digest.contrary import Article
 from arxiv_digest.digest import (
+    SEEN_CONTRARY_FILE,
     SEEN_HN_FILE,
     day_records,
     load_days,
@@ -27,6 +29,16 @@ def story(n: int = 1) -> Story:
         num_comments=10 + n,
         author="pg",
         created=datetime(2026, 8, 15, tzinfo=timezone.utc),
+    )
+
+
+def deepdive(n: int = 1) -> Article:
+    return Article(
+        article_id=f"deep-dive-{n}",
+        title=f"Deep Dive {n}",
+        url=f"https://research.contrary.com/report/deep-dive-{n}",
+        published=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        authors=("Ada Rivers", "Bo Chen"),
     )
 
 
@@ -177,6 +189,17 @@ class TestSeenHnFile:
         assert (tmp_path / SEEN_HN_FILE).name == "seen-hn.json"
 
 
+class TestSeenContraryFile:
+    """A third seen file so paper, story and article dedup never collide."""
+
+    def test_contrary_seen_is_its_own_file(self, tmp_path):
+        save_seen(tmp_path, set(), ["deep-dive-1"], filename=SEEN_CONTRARY_FILE)
+        assert load_seen(tmp_path) == set()
+        assert load_seen(tmp_path, filename=SEEN_HN_FILE) == set()
+        assert load_seen(tmp_path, filename=SEEN_CONTRARY_FILE) == {"deep-dive-1"}
+        assert (tmp_path / SEEN_CONTRARY_FILE).name == "seen-contrary.json"
+
+
 class TestStoriesArchive:
     def test_a_day_with_only_stories_still_loads(self, tmp_path):
         save_day(
@@ -262,6 +285,74 @@ class TestStoriesArchive:
         assert [s["hn_id"] for s in stories] == ["900002"]
 
 
+class TestArticlesArchive:
+    def test_a_day_with_only_articles_still_loads(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            articles=[(deepdive(1), "worth reading")],
+        )
+        days = load_days(tmp_path)
+        assert len(days) == 1
+        assert days[0]["papers"] == []
+        assert days[0]["stories"] == []
+        record = days[0]["articles"][0]
+        assert record["article_id"] == "deep-dive-1"
+        assert record["title"] == "Deep Dive 1"
+        assert record["url"] == "https://research.contrary.com/report/deep-dive-1"
+        assert record["author_line"] == "Ada Rivers, Bo Chen"
+        assert record["reason"] == "worth reading"
+
+    def test_a_day_with_all_three_kinds_carries_them(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[summary(1)],
+            stories=[(story(1), "worth a click")],
+            articles=[(deepdive(1), "worth reading")],
+        )
+        days = load_days(tmp_path)
+        assert len(days[0]["papers"]) == 1
+        assert len(days[0]["stories"]) == 1
+        assert len(days[0]["articles"]) == 1
+
+    def test_an_old_day_with_no_articles_key_still_loads(self, tmp_path):
+        """Backward compatibility with archives written before Contrary existed."""
+        import json
+
+        save_day(tmp_path, day=date(2026, 8, 15), model_label="m", summaries=[summary(1)])
+        path = tmp_path / "data" / "2026-08-15.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        del payload["articles"]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        days = load_days(tmp_path)
+        assert len(days) == 1
+        assert days[0]["papers"][0]["title"] == "Paper 1"
+
+    def test_appending_articles_keeps_the_earlier_ones_in_place(self, tmp_path):
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            articles=[(deepdive(1), "first")],
+        )
+        save_day(
+            tmp_path,
+            day=date(2026, 8, 15),
+            model_label="m",
+            summaries=[],
+            articles=[(deepdive(2), "second")],
+            append=True,
+        )
+        articles = load_days(tmp_path)[0]["articles"]
+        assert [a["article_id"] for a in articles] == ["deep-dive-1", "deep-dive-2"]
+
+
 class TestMergeRecordsIdKey:
     def test_default_id_key_matches_the_existing_paper_callers(self):
         merged = merge_records([{"arxiv_id": "a"}], [{"arxiv_id": "a"}, {"arxiv_id": "b"}])
@@ -313,11 +404,11 @@ class TestRenderWithStories:
             model_label="m",
             stories=[(story(1), "worth a click"), (story(2), "also good")],
         )
-        assert "1 paper summarized, and 2 Hacker News stories picked, by m." in text
+        assert "1 paper summarized and 2 Hacker News stories picked, by m." in text
 
     def test_a_stories_only_day_omits_the_paper_summary_line_wording(self):
         text = render([], day=date(2026, 8, 15), model_label="m", stories=[(story(1), "x")])
-        assert "1 Hacker News story, picked by m." in text
+        assert "1 Hacker News story picked, by m." in text
 
     def test_no_stories_renders_no_hacker_news_section(self):
         text = render([summary(1)], day=date(2026, 8, 15), model_label="m")
@@ -329,3 +420,38 @@ class TestRenderWithStories:
         )
         for dash in LONG_DASHES:
             assert dash not in text
+
+
+class TestRenderWithArticles:
+    def test_the_contrary_section_lists_title_byline_and_reason(self):
+        text = render(
+            [summary(1)],
+            day=date(2026, 8, 15),
+            model_label="m",
+            articles=[(deepdive(1), "sharp on AI infra")],
+        )
+        assert "## From Contrary Research" in text
+        assert "[Deep Dive 1](https://research.contrary.com/report/deep-dive-1)" in text
+        assert "by Ada Rivers, Bo Chen" in text
+        assert "sharp on AI infra" in text
+
+    def test_the_summary_line_counts_all_three_kinds(self):
+        text = render(
+            [summary(1)],
+            day=date(2026, 8, 15),
+            model_label="m",
+            stories=[(story(1), "x")],
+            articles=[(deepdive(1), "y"), (deepdive(2), "z")],
+        )
+        assert (
+            "1 paper summarized, 1 Hacker News story picked, and 2 Contrary "
+            "Research deep dives picked, by m." in text
+        )
+
+    def test_an_articles_only_day_reads_naturally(self):
+        text = render([], day=date(2026, 8, 15), model_label="m", articles=[(deepdive(1), "x")])
+        assert "1 Contrary Research deep dive picked, by m." in text
+
+    def test_no_articles_renders_no_contrary_section(self):
+        text = render([summary(1)], day=date(2026, 8, 15), model_label="m")
+        assert "From Contrary Research" not in text

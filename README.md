@@ -2,10 +2,12 @@
 
 Fetches the day's new AI papers from arXiv, picks a few worth reading, reads
 each one's body where arXiv renders it, and publishes technical notes as a
-small static site: one page per day, one index you click a date from. A
-second, lighter source runs alongside it: a handful of Hacker News stories,
-fetched and picked for the same reader, with no summary or verification step
-since picking a story makes no factual claim that needs checking.
+small static site: one page per day, one index you click a date from. Two
+lighter sources run alongside it, each on its own tab: a handful of Hacker
+News stories, and a couple of Contrary Research deep dives leaning to AI and
+technology. Both are fetched and picked for the same reader, with no summary
+or verification step, since picking something to read makes no factual claim
+that needs checking.
 
 No paid API, no per-run cost. A local model is still supported for anyone who
 would rather nothing left the machine.
@@ -50,9 +52,33 @@ away from fundraising announcements, celebrity drama and language holy wars.
 
 There is no summarize or verify step on this side. A summary makes factual
 claims that need a citation and a figure check; a one-line reason a story is
-worth a click makes none, so there is nothing to check it against. The two
-sources are independent: either one failing to fetch or pick anything still
-lets the other publish, and the run only fails if both come back empty.
+worth a click makes none, so there is nothing to check it against.
+
+## Contrary Research
+
+A third source, picked the same way: [Contrary Research](https://research.contrary.com)
+publishes long editorial deep dives on markets and frontier industries, and a
+selector picks a couple a day with a one-line reason each, weighted toward AI,
+software and the technology industry over its biotech, energy, space and
+defense pieces.
+
+The articles come from Contrary's public Prismic content API, one request for
+the whole set of editorial deep dives, newest first by publish date. That is
+what separates the essays a reader follows the site for from its several
+hundred company business breakdowns: the API carries a `deepDive` flag and the
+query asks for it directly. Every article resolves to a stable
+`research.contrary.com/report/<slug>` link, and author bylines come back in the
+same request. Like Hacker News, nothing here is summarized or verified.
+
+Contrary publishes on the order of once a week, not once a day, so this tab
+does not turn over every morning the way the papers do. The daily pick rotates
+through the pool instead: `seen-contrary.json` records what has already run, so
+the same deep dive does not lead two days running, and the tab slowly works its
+way through the catalogue.
+
+The three sources are independent: any one failing to fetch or pick anything
+still lets the others publish, and the run only fails if all three come back
+empty.
 
 ## Install
 
@@ -124,6 +150,10 @@ Useful flags:
 | `--hn-interests` | engineering practice, DevOps, job market, AI news | what the Hacker News selector favours |
 | `--no-hn` | off | skip Hacker News entirely |
 | `--hn-repeats` | off | allow stories from an earlier digest |
+| `--contrary-count` | 2 | Contrary Research deep dives to pick, capped at 4 |
+| `--contrary-interests` | AI, software, infrastructure, tech markets | what the Contrary selector favours |
+| `--no-contrary` | off | skip Contrary Research entirely |
+| `--contrary-repeats` | off | allow deep dives from an earlier digest |
 | `--stdout` | off | print instead of writing anything |
 | `--no-site` | off | archive and markdown only |
 | `-o, --out-dir` | `digests` | where the archive lives |
@@ -146,19 +176,25 @@ the largest count in the last seven days, so a short day caused by the token
 budget does not misreport the cadence, and a deliberate change to the daily
 count is reflected after one run.
 
-`index.html` is a dated ledger, newest first, with a live filter over titles,
-categories and dates. A day page reads as a record per paper: problem,
-approach, result and why it matters in the open, with method details, the
-headline figures and the limitations behind disclosures so the morning skim
-stays short without hiding anything. Picked Hacker News stories sit after the
-papers as smaller cards: title, points and comments, a link to the discussion,
-and the one-line reason it was picked, carrying a `Hacker News` chip so the
-two kinds are easy to tell apart at a glance.
+A masthead nav switches between three tabs: Papers, Hacker News and Contrary
+Research. `index.html` is the papers tab, a dated ledger newest first, with a
+live filter over titles, categories and dates. A day page reads as a record per
+paper: problem, approach, result and why it matters in the open, with method
+details, the headline figures and the limitations behind disclosures so the
+morning skim stays short without hiding anything.
+
+The two lighter sources get their own tabs rather than being folded in under
+the papers, where ten long verified write-ups would bury them. Each is a ledger
+of smaller cards, newest day first. A Hacker News card is a title, its points
+and comments, a link to the discussion, and the one-line reason it was picked.
+A Contrary Research card is a title, its byline and date, and the reason, under
+a `Contrary Research` chip. Both tabs stay skimmable and filterable the same way
+the papers do.
 
 The checks are visible where they matter, as chips next to the authors:
 `quote verified`, `figures checked`, and what was actually read (`full text` or
-`abstract only`). Story cards carry none of these, on purpose: nothing about a
-picked story was checked, so nothing claims to be.
+`abstract only`). The picked cards carry none of these, on purpose: nothing
+about a picked story or article was checked, so nothing claims to be.
 
 Interactive parts, all keyboard reachable: a theme control cycling system,
 light and dark; `/` to focus the filter; `j` and `k` between records, papers
@@ -281,24 +317,38 @@ story is worth a click makes no such claim, so `select_stories` mirrors
 `select()`'s shortlist-then-ask shape with no summarize or verify step behind
 it, and no `webtext` fetch of the linked article's body.
 
+**The `deepDive` flag is what makes Contrary a reader's tab, not a scraper.**
+Contrary's content API returns one `article` type covering both editorial deep
+dives and several hundred company business breakdowns. The reader wants the
+essays, so `contrary.py` filters on the `deepDive` flag at the query rather than
+guessing from the slug, and builds the link from the universal
+`/report/<slug>` route every article kind resolves to. If Contrary ever renames
+that flag or that route, this source goes quiet rather than publishing the wrong
+thing, which is why both live in one small module behind the same swallow-and-log
+failure contract as the other two sources.
+
 ## Failure behaviour
 
 Every step degrades instead of crashing, because nobody watches a 07:00 job.
-arXiv and Hacker News are independent sources: each is fetched, selected and
-(for arXiv) summarized behind its own error handling, so one source failing
-never blocks the other from publishing.
+arXiv, Hacker News and Contrary Research are independent sources: each is
+fetched, selected and (for arXiv) summarized behind its own error handling, so
+one source failing never blocks the others from publishing.
 
-- arXiv unreachable: logged, arXiv contributes nothing, Hacker News still
-  publishes if it has something.
-- Hacker News unreachable or unparseable: logged, Hacker News contributes
-  nothing, arXiv still publishes if it has something.
-- Both sources unreachable or empty: exit 1, and the existing site is left
+- arXiv unreachable: logged, arXiv contributes nothing, the other two still
+  publish if they have something.
+- Hacker News unreachable or unparseable: logged, it contributes nothing, the
+  other two still publish.
+- Contrary Research unreachable or unparseable: logged, it contributes nothing,
+  the other two still publish.
+- All three sources unreachable or empty: exit 1, and the existing site is left
   exactly as it was.
 - A quiet weekend on arXiv: the window widens to a week before giving up. The
-  same widening applies to Hacker News's window.
+  same widening applies to Hacker News's window. Contrary has no window to
+  widen: it publishes on the order of once a week, so the whole editorial set
+  is the candidate pool every day.
 - arXiv selection unusable after a retry: falls back to the newest papers, and
-  says so on the page. Hacker News selection does the same, falling back to
-  the newest stories.
+  says so on the page. Hacker News and Contrary selection do the same, falling
+  back to the newest stories and deep dives.
 - No HTML rendering for a paper: falls back to the abstract, and says so.
 - Citation or figures unverifiable after a retry: summary is kept and flagged.
   Hacker News stories are never summarized, so there is nothing to flag.
@@ -338,13 +388,14 @@ hitting it stops the run and publishes what is already summarized.
 
 Papers already summarized are recorded in `digests/seen.json` and skipped, so
 the same paper does not lead the digest two days running. Hacker News stories
-are recorded the same way in `digests/seen-hn.json`, a separate file so a
-paper's arXiv id and a story's HN id can never collide. Hacker News costs one
-selection call and no per-paper summarize or retry, so it barely moves this
-budget; `--hn-count` is capped at `HN_MAX_COUNT` in `cli.py` as a conservative
-starting point pending real measurement once it has run for a while, the same
-way the paper count itself was tuned after the fact rather than decided up
-front.
+are recorded the same way in `digests/seen-hn.json`, and Contrary deep dives in
+`digests/seen-contrary.json`. Each source keeps its own file so an arXiv id, an
+HN id and a Contrary slug can never collide and wrongly filter one another out.
+Hacker News and Contrary each cost one selection call and no per-item summarize
+or retry, so together they barely move this budget; `--hn-count` and
+`--contrary-count` are capped at `HN_MAX_COUNT` and `CONTRARY_MAX_COUNT` in
+`cli.py` as conservative starting points pending real measurement, the same way
+the paper count itself was tuned after the fact rather than decided up front.
 
 That filter is also why a second run of the same day needs `--append`. Without
 it the day is rewritten from scratch, and since the first run's papers (and
@@ -359,12 +410,13 @@ a top-up run that dies partway can only leave the day the same or longer.
 python -m pytest
 ```
 
-190 tests, no network and no model. The arXiv parser runs against a fixture
+245 tests, no network and no model. The arXiv parser runs against a fixture
 feed, the full-text reader against a fixture rendering, the Hacker News client
-against canned Algolia responses, and the agent tests replace the model call
-with canned responses including the invented quotes and the invented benchmark
-scores the two checks exist to catch. The site tests cover escaping, the
-pager, the theme tokens (every token defined on bare `:root`, both explicit
-themes redefining the same set), story cards, and the promise that a page
-fetches nothing at load. The CLI tests cover both sources failing
-independently, so one source going down never takes the other with it.
+against canned Algolia responses, the Contrary Research client against canned
+Prismic responses, and the agent tests replace the model call with canned
+responses including the invented quotes and the invented benchmark scores the
+two checks exist to catch. The site tests cover escaping, the pager, the theme
+tokens (every token defined on bare `:root`, both explicit themes redefining
+the same set), story and deep-dive cards, and the promise that a page fetches
+nothing at load. The CLI tests cover all three sources failing independently,
+so one source going down never takes the others with it.

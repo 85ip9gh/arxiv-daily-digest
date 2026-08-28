@@ -4,6 +4,7 @@ import pytest
 
 from arxiv_digest import agent
 from arxiv_digest.arxiv import Paper
+from arxiv_digest.contrary import Article
 from arxiv_digest.hackernews import Story
 from arxiv_digest.llm import LLMConfig, LLMError
 
@@ -44,6 +45,16 @@ def story(n: int = 0) -> Story:
         num_comments=10 + n,
         author="pg",
         created=datetime(2026, 8, 14, tzinfo=timezone.utc),
+    )
+
+
+def deepdive(n: int = 0) -> Article:
+    return Article(
+        article_id=f"deep-dive-{n}",
+        title=f"Deep Dive {n}",
+        url=f"https://research.contrary.com/report/deep-dive-{n}",
+        published=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        authors=("Ada Rivers",),
     )
 
 
@@ -260,6 +271,65 @@ class TestSelectStories:
         picks = agent.select_stories([story(i) for i in range(10)], config=CONFIG, count=2)
         assert em not in picks[0][1]
         assert picks[0][1] == "good, worth a look"
+
+
+class TestSelectArticles:
+    """select_articles mirrors select_stories: same shortlist, retry and fall
+    back to recency, no summarize step, picking Contrary Research deep dives."""
+
+    def test_returns_the_chosen_articles_with_reasons(self, monkeypatch):
+        monkeypatch.setattr(
+            agent,
+            "complete",
+            stub([{"picks": [{"index": 2, "reason": "sharp on AI infra"}, {"index": 0, "reason": "relevant"}]}]),
+        )
+        picks = agent.select_articles([deepdive(i) for i in range(10)], config=CONFIG, count=2)
+        assert [a.article_id for a, _ in picks] == ["deep-dive-2", "deep-dive-0"]
+        assert picks[0][1] == "sharp on AI infra"
+
+    def test_out_of_range_and_duplicate_indices_trigger_a_retry(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            agent,
+            "complete",
+            stub(
+                [
+                    {"picks": [{"index": 99, "reason": "x"}, {"index": 1, "reason": "y"}, {"index": 1, "reason": "y"}]},
+                    {"picks": [{"index": 3, "reason": "ok"}, {"index": 4, "reason": "ok"}]},
+                ],
+                calls,
+            ),
+        )
+        picks = agent.select_articles([deepdive(i) for i in range(10)], config=CONFIG, count=2)
+        assert [a.article_id for a, _ in picks] == ["deep-dive-3", "deep-dive-4"]
+        assert "rejected" in calls[1]
+
+    def test_falls_back_to_recency_when_the_model_keeps_failing(self, monkeypatch):
+        monkeypatch.setattr(agent, "complete", stub([LLMError("daemon down")]))
+        picks = agent.select_articles([deepdive(i) for i in range(10)], config=CONFIG, count=2)
+        assert [a.article_id for a, _ in picks] == ["deep-dive-0", "deep-dive-1"]
+        assert "recency" in picks[0][1]
+
+    def test_a_thin_day_skips_the_model_entirely(self, monkeypatch):
+        monkeypatch.setattr(agent, "complete", stub([]))
+        picks = agent.select_articles([deepdive(0), deepdive(1)], config=CONFIG, count=3)
+        assert len(picks) == 2
+
+    def test_reason_is_cleaned_of_long_dashes(self, monkeypatch):
+        em = chr(0x2014)
+        monkeypatch.setattr(
+            agent,
+            "complete",
+            stub([{"picks": [{"index": 0, "reason": f"deep {em} but readable"}, {"index": 1, "reason": "fine"}]}]),
+        )
+        picks = agent.select_articles([deepdive(i) for i in range(10)], config=CONFIG, count=2)
+        assert em not in picks[0][1]
+        assert picks[0][1] == "deep, but readable"
+
+    def test_default_interests_lean_to_tech_and_ai(self):
+        text = agent.DEFAULT_CONTRARY_INTERESTS.lower()
+        assert "artificial intelligence" in text
+        assert "software" in text
 
 
 class TestSummarize:
