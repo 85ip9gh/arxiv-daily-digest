@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from . import fulltext
 from .arxiv import Paper
+from .contrary import Article
 from .hackernews import Story
 from .llm import LLMConfig, LLMError, RateLimitExhausted, complete
 
@@ -44,6 +45,13 @@ DEFAULT_HN_INTERESTS = (
     "tech job market, notable AI industry and product news, and self "
     "hosted and developer tooling, weighted away from startup fundraising "
     "news, celebrity tech drama, and language or framework holy wars"
+)
+
+DEFAULT_CONTRARY_INTERESTS = (
+    "artificial intelligence and machine learning, software and "
+    "developer tooling, computing and cloud infrastructure, and the "
+    "technology industry and its markets, strongly preferred over Contrary's "
+    "biotech, energy, space, defense and consumer deep dives"
 )
 
 SELECT_SCHEMA = {
@@ -339,6 +347,88 @@ def select_stories(
         )
 
     return [(s, "picked by recency, the model's selection was unusable") for s in stories[:count]]
+
+
+CONTRARY_SYSTEM = (
+    "You are a technically literate reader scanning Contrary Research's deep "
+    "dives for a software engineer who follows AI and the technology industry. "
+    "You favour substance over hype and say in one plain sentence why an essay "
+    "earns a slot. Never use em-dashes."
+)
+
+
+def _contrary_candidate_block(articles: list[Article]) -> str:
+    lines = []
+    for i, article in enumerate(articles):
+        entry = f"[{i}] {article.title}"
+        if article.author_line:
+            entry += f"\n    authors: {article.author_line}"
+        if article.description:
+            entry += f"\n    preview: {article.description}"
+        lines.append(entry)
+    return "\n\n".join(lines)
+
+
+def select_articles(
+    articles: list[Article],
+    *,
+    config: LLMConfig,
+    count: int = 2,
+    interests: str = DEFAULT_CONTRARY_INTERESTS,
+    attempts: int = 2,
+    shortlist: int = 40,
+) -> list[tuple[Article, str]]:
+    """Pick `count` deep dives and keep the selector's one-line reason for each.
+
+    Mirrors `select_stories` exactly: same shortlist-then-ask shape, same retry
+    on an unusable answer, same fall back to the newest `count` articles rather
+    than publishing nothing. There is no summarize step on this side either, so
+    the one-line reason is the whole "why this is worth reading" a reader gets.
+    """
+    articles = articles[:shortlist]
+    if len(articles) <= count:
+        return [(a, "only candidate for the day") for a in articles]
+
+    prompt = (
+        f"Here are {len(articles)} recent deep dives from Contrary Research.\n\n"
+        f"{_contrary_candidate_block(articles)}\n\n"
+        f"Pick the {count} most worth reading for someone interested in: {interests}.\n"
+        f"Prefer substance over hype. Do not pick two essays that make the "
+        f"same point.\n"
+        f"Give each pick's list index and one sentence saying why it earns a slot."
+    )
+
+    last_error = ""
+    for attempt in range(attempts):
+        try:
+            raw = complete(
+                prompt if not last_error else f"{prompt}\n\nYour last answer was rejected: {last_error}",
+                SELECT_SCHEMA,
+                config=config,
+                system=CONTRARY_SYSTEM,
+            )
+        except LLMError:
+            break
+
+        chosen: list[tuple[Article, str]] = []
+        seen: set[int] = set()
+        for pick in raw.get("picks", []):
+            try:
+                index = int(pick.get("index"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= index < len(articles) and index not in seen:
+                seen.add(index)
+                chosen.append((articles[index], clean_dashes(str(pick.get("reason", "")).strip())))
+
+        if len(chosen) >= count:
+            return chosen[:count]
+        last_error = (
+            f"you returned {len(chosen)} usable indices, "
+            f"needed {count} distinct integers between 0 and {len(articles) - 1}"
+        )
+
+    return [(a, "picked by recency, the model's selection was unusable") for a in articles[:count]]
 
 
 def _prompt_for(paper: Paper, body: str, read_full_text: bool) -> str:

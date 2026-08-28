@@ -18,8 +18,26 @@ def hn_story(n: int = 1) -> dict:
     }
 
 
+def deep_dive(n: int = 1) -> dict:
+    return {
+        "article_id": f"deep-dive-{n}",
+        "title": f"Breaking Down the Orbital Launch Market {n}",
+        "url": f"https://research.contrary.com/report/deep-dive-{n}",
+        "authors": ["Alexander Zou", "Claire Burch"],
+        "author_line": "Alexander Zou, Claire Burch",
+        "published": "2026-08-06T14:28:06+00:00",
+        "description": "",
+        "reason": "a clear read on the AI compute buildout",
+    }
+
+
 def day(
-    iso: str, *, grounded: bool = True, stray: list | None = None, stories: list | None = None
+    iso: str,
+    *,
+    grounded: bool = True,
+    stray: list | None = None,
+    stories: list | None = None,
+    articles: list | None = None,
 ) -> dict:
     return {
         "date": iso,
@@ -49,6 +67,7 @@ def day(
             }
         ],
         "stories": stories if stories is not None else [],
+        "articles": articles if articles is not None else [],
     }
 
 
@@ -84,10 +103,10 @@ class TestIndex:
         assert '<span class="chip cat">Hacker News</span>' not in page
 
     def test_the_papers_tab_is_marked_active(self):
-        assert 'class="tab active" href="index.html">Papers' in site.render_index([])
-        assert 'class="tab" href="hacker-news.html">Hacker News' in site.render_index(
-            []
-        )
+        page = site.render_index([])
+        assert 'class="tab active" href="index.html">Papers' in page
+        assert 'class="tab" href="hacker-news.html">Hacker News' in page
+        assert 'class="tab" href="contrary.html">Contrary Research' in page
 
 
 class TestDayPage:
@@ -232,6 +251,68 @@ class TestHackerNewsPage:
         assert "fetch(" not in page
 
 
+class TestContraryPage:
+    def test_a_pick_renders_title_byline_and_reason(self):
+        page = site.render_contrary([day("2026-08-15", articles=[deep_dive(1)])])
+        assert "Breaking Down the Orbital Launch Market 1" in page
+        assert 'href="https://research.contrary.com/report/deep-dive-1"' in page
+        assert "Alexander Zou, Claire Burch" in page
+        assert "August 6, 2026" in page
+        assert "a clear read on the AI compute buildout" in page
+
+    def test_a_pick_carries_a_contrary_chip_but_no_verification_chip(self):
+        page = site.render_contrary([day("2026-08-15", articles=[deep_dive(1)])])
+        assert '<span class="chip cat">Contrary Research</span>' in page
+        assert "quote verified" not in page
+        assert "figures checked" not in page
+        assert "<blockquote" not in page
+
+    def test_multiple_picks_all_appear(self):
+        page = site.render_contrary(
+            [day("2026-08-15", articles=[deep_dive(1), deep_dive(2)])]
+        )
+        assert "Breaking Down the Orbital Launch Market 1" in page
+        assert "Breaking Down the Orbital Launch Market 2" in page
+
+    def test_days_with_no_picks_are_skipped(self):
+        page = site.render_contrary(
+            [day("2026-08-15"), day("2026-08-14", articles=[deep_dive(1)])]
+        )
+        assert "August 15, 2026" not in page
+        assert "August 14, 2026" in page
+
+    def test_empty_archive_renders_no_picks_yet(self):
+        assert "No picks yet." in site.render_contrary([])
+        assert "No picks yet." in site.render_contrary([day("2026-08-15")])
+
+    def test_picks_are_searchable_by_title_and_author(self):
+        page = site.render_contrary([day("2026-08-15", articles=[deep_dive(1)])])
+        row = re.search(r'data-text="([^"]+)"', page).group(1)
+        assert "breaking down the orbital launch market" in row
+        assert "alexander zou" in row
+        assert 'id="filter"' in page
+
+    def test_the_contrary_tab_is_marked_active(self):
+        page = site.render_contrary([day("2026-08-15", articles=[deep_dive(1)])])
+        assert 'class="tab active" href="contrary.html">Contrary Research' in page
+        assert 'class="tab" href="index.html">Papers' in page
+
+    def test_text_is_escaped_not_injected(self):
+        payload = day("2026-08-15", articles=[deep_dive(1)])
+        payload["articles"][0]["title"] = '<script>alert("x")</script>'
+        page = site.render_contrary([payload])
+        assert "<script>alert" not in page
+        assert "&lt;script&gt;" in page
+
+    def test_page_fetches_nothing_at_load(self, tmp_path: Path):
+        site.build([day("2026-08-15", articles=[deep_dive(1)])], tmp_path)
+        page = (tmp_path / "contrary.html").read_text(encoding="utf-8")
+        assert "src=" not in page
+        assert "<link " not in page
+        assert "@import" not in page
+        assert "fetch(" not in page
+
+
 class TestThemeTokens:
     """The classic unreadable-page bug is a color defined only inside a media
     or [data-theme] block, which never applies in the un-stamped default."""
@@ -263,9 +344,10 @@ class TestThemeTokens:
 class TestBuild:
     def test_writes_an_index_and_one_page_per_day(self, tmp_path: Path):
         written = site.build([day("2026-08-15"), day("2026-08-14")], tmp_path)
-        assert len(written) == 5
+        assert len(written) == 6
         assert (tmp_path / "index.html").exists()
         assert (tmp_path / "hacker-news.html").exists()
+        assert (tmp_path / "contrary.html").exists()
         assert (tmp_path / "2026-08-15.html").exists()
         assert (tmp_path / "2026-08-14.html").exists()
 
