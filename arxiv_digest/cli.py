@@ -13,7 +13,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import agent, arxiv, digest, hackernews, site
+from . import agent, arxiv, contrary, digest, hackernews, site
 from .llm import LLMConfig, LLMError, RateLimitExhausted, available_models, check
 
 DEFAULT_OUT_DIR = Path("digests")
@@ -33,13 +33,20 @@ MAX_COUNT = 10
 # the fact rather than decided up front.
 HN_MAX_COUNT = 8
 
+# Contrary Research is one selection call over a few dozen deep dives, the same
+# near-free cost as Hacker News. It publishes on the order of once a week, so a
+# small daily pick that rotates through the pool as seen-contrary.json fills is
+# the point, not a high ceiling.
+CONTRARY_MAX_COUNT = 4
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arxiv-digest",
         description=(
             "Pick a few of the day's new arXiv AI papers and summarize them, "
-            "plus a handful of picked Hacker News stories."
+            "plus a handful of picked Hacker News stories and Contrary Research "
+            "deep dives."
         ),
     )
     parser.add_argument(
@@ -131,6 +138,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--hn-repeats",
         action="store_true",
         help="allow stories that appeared in an earlier digest",
+    )
+    parser.add_argument(
+        "--contrary-count",
+        type=int,
+        default=2,
+        help=f"Contrary Research deep dives to pick, capped at {CONTRARY_MAX_COUNT}",
+    )
+    parser.add_argument(
+        "--contrary-interests",
+        default=agent.DEFAULT_CONTRARY_INTERESTS,
+        help="what the Contrary Research selector should favour",
+    )
+    parser.add_argument(
+        "--no-contrary", action="store_true", help="skip Contrary Research entirely"
+    )
+    parser.add_argument(
+        "--contrary-repeats",
+        action="store_true",
+        help="allow deep dives that appeared in an earlier digest",
     )
     parser.add_argument(
         "--stdout", action="store_true", help="print the digest instead of writing it"
@@ -326,6 +352,61 @@ def _run_hn(args, config: LLMConfig, seen: set[str]) -> list:
     return picks
 
 
+def _run_contrary(args, config: LLMConfig, seen: set[str]) -> list:
+    """Fetch and pick the day's Contrary Research deep dives.
+
+    Same contract as `_run_hn`: fetched and picked, never summarized, so there
+    is nothing to verify, and every error is logged and swallowed rather than
+    raised. The worst this returns is an empty list, so it can never take arXiv
+    or Hacker News down with it.
+    """
+    if args.no_contrary:
+        return []
+
+    try:
+        fetched = contrary.fetch_recent()
+    except contrary.FetchError as exc:
+        print(f"contrary: fetch failed: {exc}", file=sys.stderr)
+        return []
+
+    count = min(args.contrary_count, CONTRARY_MAX_COUNT)
+    if count < args.contrary_count:
+        print(
+            f"contrary: asked for {args.contrary_count} deep dives, "
+            f"capping at {CONTRARY_MAX_COUNT}",
+            file=sys.stderr,
+        )
+
+    candidates = [a for a in fetched.articles if a.article_id not in seen]
+    if not candidates:
+        print("contrary: no unseen deep dives", file=sys.stderr)
+        return []
+
+    print(
+        f"contrary: {len(candidates)} candidates, picking {count} with {config.label}",
+        file=sys.stderr,
+    )
+
+    try:
+        picks = agent.select_articles(
+            candidates,
+            config=config,
+            count=count,
+            interests=args.contrary_interests,
+            shortlist=args.shortlist,
+        )
+    except LLMError as exc:
+        print(f"contrary: model error: {exc}", file=sys.stderr)
+        return []
+
+    for article, reason in picks:
+        print(
+            f"contrary: picked {article.article_id}: {article.title[:70]}",
+            file=sys.stderr,
+        )
+    return picks
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -351,14 +432,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.hn_repeats
         else digest.load_seen(args.out_dir, filename=digest.SEEN_HN_FILE)
     )
+    contrary_seen = (
+        set()
+        if args.contrary_repeats
+        else digest.load_seen(args.out_dir, filename=digest.SEEN_CONTRARY_FILE)
+    )
 
-    # Neither source can take the other down. Each fetches, selects, and
-    # (for arXiv) summarizes and verifies behind its own error handling, and
-    # only an empty result from both means the run has nothing to publish.
+    # No source can take another down. Each fetches, selects, and (for arXiv)
+    # summarizes and verifies behind its own error handling, and only an empty
+    # result from all three means the run has nothing to publish.
     summaries = _run_arxiv(args, config, seen)
     hn_picks = _run_hn(args, config, hn_seen)
+    contrary_picks = _run_contrary(args, config, contrary_seen)
 
-    if not summaries and not hn_picks:
+    if not summaries and not hn_picks and not contrary_picks:
         print(
             f"nothing to publish today, leaving {args.out_dir} untouched",
             file=sys.stderr,
@@ -370,6 +457,9 @@ def main(argv: list[str] | None = None) -> int:
     # the merged records rather than from what this process happens to hold.
     records = [digest.to_record(s) for s in summaries]
     story_records = [digest.to_story_record(s, reason) for s, reason in hn_picks]
+    article_records = [
+        digest.to_article_record(a, reason) for a, reason in contrary_picks
+    ]
     if args.append:
         existing_papers = digest.day_records(args.out_dir, today, key="papers")
         records = digest.merge_records(existing_papers, records, id_key="arxiv_id")
@@ -377,15 +467,23 @@ def main(argv: list[str] | None = None) -> int:
         story_records = digest.merge_records(
             existing_stories, story_records, id_key="hn_id"
         )
-        if existing_papers or existing_stories:
+        existing_articles = digest.day_records(args.out_dir, today, key="articles")
+        article_records = digest.merge_records(
+            existing_articles, article_records, id_key="article_id"
+        )
+        if existing_papers or existing_stories or existing_articles:
             print(
-                f"appending to the {len(existing_papers)} papers and "
-                f"{len(existing_stories)} stories already archived for "
-                f"{today.isoformat()}",
+                f"appending to the {len(existing_papers)} papers, "
+                f"{len(existing_stories)} stories and {len(existing_articles)} "
+                f"deep dives already archived for {today.isoformat()}",
                 file=sys.stderr,
             )
     text = digest.render_records(
-        records, day=today, model_label=config.label, stories=story_records
+        records,
+        day=today,
+        model_label=config.label,
+        stories=story_records,
+        articles=article_records,
     )
 
     if args.stdout:
@@ -399,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
         model_label=config.label,
         summaries=summaries,
         stories=hn_picks,
+        articles=contrary_picks,
         append=args.append,
     )
     print(f"wrote {path}", file=sys.stderr)
@@ -411,6 +510,13 @@ def main(argv: list[str] | None = None) -> int:
             hn_seen,
             [s.hn_id for s, _ in hn_picks],
             filename=digest.SEEN_HN_FILE,
+        )
+    if not args.contrary_repeats:
+        digest.save_seen(
+            args.out_dir,
+            contrary_seen,
+            [a.article_id for a, _ in contrary_picks],
+            filename=digest.SEEN_CONTRARY_FILE,
         )
 
     if not args.no_site:

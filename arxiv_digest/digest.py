@@ -11,11 +11,13 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .agent import Summary
+from .contrary import Article
 from .hackernews import Story
 
 DATA_DIR = "data"
 SEEN_FILE = "seen.json"
 SEEN_HN_FILE = "seen-hn.json"
+SEEN_CONTRARY_FILE = "seen-contrary.json"
 # Two weeks is long enough that a paper cannot come back through a v2 posting
 # in the same fortnight, and short enough that the file stays small.
 SEEN_LIMIT = 400
@@ -71,10 +73,29 @@ def to_story_record(story: Story, reason: str) -> dict:
     }
 
 
+def to_article_record(article: Article, reason: str) -> dict:
+    """Flatten one picked Contrary deep dive into the archive's shape.
+
+    Like a Hacker News story, nothing here is verified because nothing here is
+    a claim: the article is picked, not summarized. The record is the article's
+    own facts plus the selector's one-line reason.
+    """
+    return {
+        "article_id": article.article_id,
+        "title": article.title,
+        "url": article.url,
+        "authors": list(article.authors),
+        "author_line": article.author_line,
+        "published": article.published.isoformat(),
+        "description": article.description,
+        "reason": reason,
+    }
+
+
 def day_records(out_dir: Path, day: date, *, key: str = "papers") -> list[dict]:
     """The records already archived for one day under `key`, or an empty list.
 
-    `key` is `"papers"` or `"stories"`, the two lists a day's payload carries.
+    `key` is `"papers"`, `"stories"` or `"articles"`, the lists a day carries.
     """
     path = out_dir / DATA_DIR / f"{day.isoformat()}.json"
     try:
@@ -111,6 +132,7 @@ def save_day(
     model_label: str,
     summaries: list[Summary],
     stories: list[tuple[Story, str]] = (),
+    articles: list[tuple[Article, str]] = (),
     append: bool = False,
 ) -> Path:
     """Write one day of the archive. This is what the site is rebuilt from.
@@ -119,10 +141,11 @@ def save_day(
     replaces the day outright, and because seen.json filters out the papers the
     first run covered, the replacement is a different set: topping a day up
     silently deleted the morning's work. The same logic applies to stories
-    against `seen-hn.json`.
+    against `seen-hn.json` and to articles against `seen-contrary.json`.
     """
     records = [to_record(s) for s in summaries]
     story_records = [to_story_record(s, reason) for s, reason in stories]
+    article_records = [to_article_record(a, reason) for a, reason in articles]
     if append:
         records = merge_records(
             day_records(out_dir, day, key="papers"), records, id_key="arxiv_id"
@@ -132,12 +155,18 @@ def save_day(
             story_records,
             id_key="hn_id",
         )
+        article_records = merge_records(
+            day_records(out_dir, day, key="articles"),
+            article_records,
+            id_key="article_id",
+        )
     payload = {
         "date": day.isoformat(),
         "model": model_label,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "papers": records,
         "stories": story_records,
+        "articles": article_records,
     }
     data_dir = out_dir / DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -149,9 +178,9 @@ def save_day(
 def load_days(out_dir: Path) -> list[dict]:
     """Every archived day, newest first. Unreadable files are skipped, not fatal.
 
-    A day counts as real if it carries papers or stories, so a day that came
-    from a Hacker News only run, or an old day with no `"stories"` key at all,
-    both load the same as one that has both.
+    A day counts as real if it carries papers, stories or articles, so a day
+    from a single-source run, or an old day with no `"stories"` or `"articles"`
+    key at all, loads the same as one that has all three.
     """
     data_dir = out_dir / DATA_DIR
     if not data_dir.is_dir():
@@ -163,7 +192,7 @@ def load_days(out_dir: Path) -> list[dict]:
         except (json.JSONDecodeError, OSError):
             continue
         if isinstance(payload, dict) and payload.get("date") and (
-            payload.get("papers") or payload.get("stories")
+            payload.get("papers") or payload.get("stories") or payload.get("articles")
         ):
             days.append(payload)
     return days
@@ -196,12 +225,14 @@ def render(
     day: date,
     model_label: str,
     stories: list[tuple[Story, str]] = (),
+    articles: list[tuple[Article, str]] = (),
 ) -> str:
     return render_records(
         [to_record(s) for s in summaries],
         day=day,
         model_label=model_label,
         stories=[to_story_record(s, reason) for s, reason in stories],
+        articles=[to_article_record(a, reason) for a, reason in articles],
     )
 
 
@@ -209,8 +240,22 @@ def _plural(n: int, singular: str, plural: str | None = None) -> str:
     return singular if n == 1 else (plural or f"{singular}s")
 
 
+def _join(parts: list[str]) -> str:
+    """`a`, `a and b`, or `a, b, and c`. Serial comma from three parts up."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return f"{', '.join(parts[:-1])}, and {parts[-1]}"
+
+
 def render_records(
-    records: list[dict], *, day: date, model_label: str, stories: list[dict] = ()
+    records: list[dict],
+    *,
+    day: date,
+    model_label: str,
+    stories: list[dict] = (),
+    articles: list[dict] = (),
 ) -> str:
     """Render the markdown from archive records rather than live summaries.
 
@@ -220,20 +265,22 @@ def render_records(
     """
     count = len(records)
     story_count = len(stories)
-    noun_paper = _plural(count, "paper")
-    noun_story = _plural(story_count, "story", "stories")
+    article_count = len(articles)
 
-    if count and story_count:
-        summary_line = (
-            f"{count} {noun_paper} summarized, and {story_count} Hacker News "
-            f"{noun_story} picked, by {model_label}."
+    parts = []
+    if count:
+        parts.append(f"{count} {_plural(count, 'paper')} summarized")
+    if story_count:
+        parts.append(
+            f"{story_count} Hacker News {_plural(story_count, 'story', 'stories')} picked"
         )
-    elif count:
-        summary_line = f"{count} {noun_paper}, summarized by {model_label}."
-    elif story_count:
-        summary_line = (
-            f"{story_count} Hacker News {noun_story}, picked by {model_label}."
+    if article_count:
+        parts.append(
+            f"{article_count} Contrary Research "
+            f"{_plural(article_count, 'deep dive')} picked"
         )
+    if parts:
+        summary_line = f"{_join(parts)}, by {model_label}."
     else:
         summary_line = f"Nothing published, by {model_label}."
 
@@ -295,6 +342,13 @@ def render_records(
                 f"{s['num_comments']} comments. {s['reason']} "
                 f"[Discussion]({s['hn_url']}).",
             ]
+        lines += [""]
+
+    if articles:
+        lines += ["## From Contrary Research", ""]
+        for a in articles:
+            byline = f" by {a['author_line']}" if a.get("author_line") else ""
+            lines += [f"- [{a['title']}]({a['url']}).{byline} {a['reason']}"]
         lines += [""]
 
     failures = []
