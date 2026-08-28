@@ -468,6 +468,8 @@ def _topbar(links: str = "", *, section: str = "papers") -> str:
         'href="index.html">Papers</a>\n'
         f'<a class="tab{" active" if section == "hn" else ""}" '
         'href="hacker-news.html">Hacker News</a>\n'
+        f'<a class="tab{" active" if section == "contrary" else ""}" '
+        'href="contrary.html">Contrary Research</a>\n'
     )
     return (
         '<div class="top"><div class="top-inner">\n'
@@ -779,13 +781,109 @@ def render_hn(days: list[dict]) -> str:
     return _page(f"Hacker News | {SITE_TITLE}", body, INDEX_SCRIPT, HN_TAGLINE)
 
 
+CONTRARY_TAGLINE = (
+    "A couple of Contrary Research deep dives worth reading each day, leaning "
+    "to AI and technology: a title and one line on why it was picked. Not "
+    "summarized, and not checked against a source, because a one-line reason "
+    "makes no factual claim to verify."
+)
+
+
+def _deepdive(article: dict) -> str:
+    """One picked Contrary deep dive: title, its byline and date, and the reason
+    it earned a slot. Nothing here is a factual claim about the essay's contents
+    the way a paper summary is, so there is nothing to verify and nothing to
+    disclose, exactly like a Hacker News pick."""
+    bits = []
+    published = str(article.get("published", ""))
+    if published:
+        bits.append(_e(_long_date(published[:10])))
+    if article.get("author_line"):
+        bits.append(_e(article["author_line"]))
+    bits.append('<span class="chip cat">Contrary Research</span>')
+    meta = " &middot; ".join(bits)
+    reason = article.get("reason", "")
+    reason_html = f'<p class="reason">{_e(reason)}</p>\n' if reason else ""
+    return (
+        '<li class="pick">\n'
+        f'<a href="{_e(article.get("url", "#"))}">{_e(article.get("title", ""))}</a>\n'
+        f'<p class="meta">{meta}</p>\n'
+        + reason_html
+        + "</li>\n"
+    )
+
+
+def render_contrary(days: list[dict]) -> str:
+    """The Contrary Research tab: every day that had a pick, newest first, each
+    deep dive as a title, its byline, and the one line explaining the pick.
+
+    Its own page for the same reason Hacker News has one: a picked essay is not
+    a checked claim, and folding it into the paper digest would bury it under
+    the long verified write-ups instead of giving it a place to be skimmed.
+    """
+    head = (
+        _topbar(section="contrary")
+        + '<div class="wrap">\n<header class="masthead">\n'
+        '<p class="eyebrow">Daily, 07:00 Atlantic</p>\n'
+        "<h1>Contrary Research</h1>\n"
+        f"<p>{_e(CONTRARY_TAGLINE)}</p>\n</header>\n"
+    )
+
+    picked = [d for d in days if d.get("articles")]
+    if not picked:
+        body = (
+            head
+            + '<p class="empty">No picks yet.</p>\n'
+            + _footer(kind="contrary")
+            + "</div>\n"
+        )
+        return _page(f"Contrary Research | {SITE_TITLE}", body, "", CONTRARY_TAGLINE)
+
+    rows = []
+    for day in picked:
+        articles = day["articles"]
+        picks = "".join(_deepdive(a) for a in articles)
+        haystack = " ".join(
+            [day["date"], _long_date(day["date"]), _weekday(day["date"])]
+            + [str(a.get("title", "")) for a in articles]
+            + [str(a.get("author_line", "")) for a in articles]
+        ).lower()
+        rows.append(
+            f'<li data-text="{_e(haystack)}">\n'
+            '<div class="entry">\n'
+            f'<div class="entry-date">{_e(_long_date(day["date"]))}'
+            f"<span>{_e(_weekday(day['date']))}</span></div>\n"
+            f'<ul class="picks">{picks}</ul>\n'
+            "</div>\n</li>\n"
+        )
+
+    body = (
+        head
+        + '<div class="filter">\n'
+        '<input id="filter" type="search" placeholder="Filter by title, author or date" '
+        'autocomplete="off" aria-label="Filter picks">\n'
+        f'<span class="count" id="count" role="status">{len(picked)} '
+        f'{"day" if len(picked) == 1 else "days"}</span>\n'
+        "</div>\n"
+        f'<ul class="ledger">\n{"".join(rows)}</ul>\n'
+        + _footer(keys=" Press <kbd>/</kbd> to filter.", kind="contrary")
+        + "</div>\n"
+    )
+    return _page(f"Contrary Research | {SITE_TITLE}", body, INDEX_SCRIPT, CONTRARY_TAGLINE)
+
+
 def build(days: list[dict], site_dir: Path) -> list[Path]:
     """Write the whole site. Every page is regenerated on every build."""
     site_dir.mkdir(parents=True, exist_ok=True)
     blurb = tagline(days)
-    written = [site_dir / "index.html", site_dir / "hacker-news.html"]
+    written = [
+        site_dir / "index.html",
+        site_dir / "hacker-news.html",
+        site_dir / "contrary.html",
+    ]
     (site_dir / "index.html").write_text(render_index(days), encoding="utf-8")
     (site_dir / "hacker-news.html").write_text(render_hn(days), encoding="utf-8")
+    (site_dir / "contrary.html").write_text(render_contrary(days), encoding="utf-8")
     (site_dir / "robots.txt").write_text(ROBOTS, encoding="utf-8")
     written.append(site_dir / "robots.txt")
 

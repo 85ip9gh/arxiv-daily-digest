@@ -8,9 +8,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from arxiv_digest import arxiv, cli, digest, hackernews
+from arxiv_digest import arxiv, cli, contrary, digest, hackernews
 from arxiv_digest.agent import Summary
 from arxiv_digest.arxiv import Paper
+from arxiv_digest.contrary import Article
 from arxiv_digest.hackernews import Story
 from arxiv_digest.llm import LLMError, RateLimitExhausted
 
@@ -60,13 +61,22 @@ def story(n: int) -> Story:
     )
 
 
+def article(n: int) -> Article:
+    return Article(
+        article_id=f"deep-dive-{n}",
+        title=f"Deep Dive {n}",
+        url=f"https://research.contrary.com/report/deep-dive-{n}",
+        published=datetime(2026, 8, 16, tzinfo=timezone.utc),
+        authors=("Ada Rivers",),
+    )
+
+
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    """A run with arXiv, Hacker News and the model replaced, writing into a
-    temp archive. Hacker News fetches empty by default, so tests that only
-    care about the arXiv path do not have to think about the second source;
-    tests that do can override `hackernews.fetch_recent` and `agent.select_stories`
-    themselves.
+    """A run with arXiv, Hacker News, Contrary and the model replaced, writing
+    into a temp archive. The two lighter sources fetch empty by default, so
+    tests that only care about the arXiv path do not have to think about them;
+    tests that do can override their `fetch_recent` and selector themselves.
     """
     papers = [paper(n) for n in range(1, 6)]
     monkeypatch.setenv("ARXIV_DIGEST_API_KEY", "test-key")
@@ -79,6 +89,9 @@ def wired(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         hackernews, "fetch_recent", lambda **kw: hackernews.Fetched(stories=[], hours=48)
+    )
+    monkeypatch.setattr(
+        contrary, "fetch_recent", lambda **kw: contrary.Fetched(articles=[])
     )
     return tmp_path, papers
 
@@ -231,7 +244,7 @@ class TestAppend:
         from datetime import date
 
         text = (tmp_path / f"{date.today().isoformat()}.md").read_text(encoding="utf-8")
-        assert "4 papers, summarized by" in text
+        assert "4 papers summarized, by" in text
         assert "## 4." in text
 
 
@@ -326,8 +339,100 @@ class TestHackerNews:
         assert picked[-1] == 1
 
 
+class TestContrary:
+    """Contrary Research is fetched and picked, never summarized or verified,
+    exactly like Hacker News."""
+
+    def _articles(self, n=3):
+        return [article(i) for i in range(1, n + 1)]
+
+    def test_a_run_publishes_deep_dives_alongside_papers(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            contrary, "fetch_recent", lambda **kw: contrary.Fetched(articles=self._articles())
+        )
+        monkeypatch.setattr(
+            cli.agent,
+            "select_articles",
+            lambda cands, **kw: [(a, "worth reading") for a in cands[: kw["count"]]],
+        )
+        assert run(tmp_path) == 0
+        day = digest.load_days(tmp_path)[0]
+        assert len(day["papers"]) == 3
+        # --contrary-count defaults to 2, so two of the three candidates are picked.
+        assert len(day["articles"]) == 2
+        assert day["articles"][0]["reason"] == "worth reading"
+
+    def test_no_contrary_skips_the_third_source_entirely(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+
+        def explode(**kw):
+            raise AssertionError("contrary.fetch_recent must not be called")
+
+        monkeypatch.setattr(contrary, "fetch_recent", explode)
+        assert run(tmp_path, "--no-contrary") == 0
+        assert digest.load_days(tmp_path)[0]["articles"] == []
+
+    def test_contrary_count_is_capped(self, wired, monkeypatch, capsys):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            contrary,
+            "fetch_recent",
+            lambda **kw: contrary.Fetched(articles=self._articles(20)),
+        )
+        seen = {}
+        monkeypatch.setattr(
+            cli.agent,
+            "select_articles",
+            lambda cands, **kw: seen.setdefault("count", kw["count"]) and None
+            or [(a, "x") for a in cands[: kw["count"]]],
+        )
+        run(tmp_path, "--contrary-count", "20")
+        assert seen["count"] == cli.CONTRARY_MAX_COUNT
+        assert f"capping at {cli.CONTRARY_MAX_COUNT}" in capsys.readouterr().err
+
+    def test_contrary_dedup_uses_its_own_seen_file(self, wired, monkeypatch):
+        """seen-contrary.json must be its own file, or an article_id colliding
+        with a paper's arxiv_id or a story's hn_id would wrongly filter it out."""
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            contrary, "fetch_recent", lambda **kw: contrary.Fetched(articles=self._articles(2))
+        )
+        monkeypatch.setattr(
+            cli.agent,
+            "select_articles",
+            lambda cands, **kw: [(a, "x") for a in cands[: kw["count"]]],
+        )
+        run(tmp_path)
+        assert (tmp_path / digest.SEEN_CONTRARY_FILE).exists()
+        contrary_seen = digest.load_seen(tmp_path, filename=digest.SEEN_CONTRARY_FILE)
+        assert contrary_seen == {"deep-dive-1", "deep-dive-2"}
+
+    def test_contrary_repeats_skips_the_dedup_filter(self, wired, monkeypatch):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+        monkeypatch.setattr(
+            contrary, "fetch_recent", lambda **kw: contrary.Fetched(articles=self._articles(1))
+        )
+        picked = []
+        monkeypatch.setattr(
+            cli.agent,
+            "select_articles",
+            lambda cands, **kw: picked.append(len(cands)) or [(a, "x") for a in cands[: kw["count"]]],
+        )
+        run(tmp_path)
+        run(tmp_path, "--contrary-repeats")
+        # Without --contrary-repeats the second run would see zero candidates,
+        # the one deep dive having been recorded in seen-contrary.json already.
+        assert picked[-1] == 1
+
+
 class TestIndependentSourceFailure:
-    """Neither source can take the other down."""
+    """No source can take another down."""
 
     def test_arxiv_failure_still_lets_hn_publish(self, wired, monkeypatch, capsys):
         tmp_path, _ = wired
@@ -366,9 +471,21 @@ class TestIndependentSourceFailure:
         assert day["stories"] == []
         assert "hn: fetch failed" in capsys.readouterr().err
 
-    def test_both_sources_failing_is_the_only_thing_that_exits_nonzero(
-        self, wired, monkeypatch
-    ):
+    def test_contrary_failure_still_lets_arxiv_publish(self, wired, monkeypatch, capsys):
+        tmp_path, _ = wired
+        monkeypatch.setattr(cli.agent, "summarize", lambda p, **kw: summary_for(p))
+
+        def broke_fetch(**kw):
+            raise contrary.FetchError("contrary is down")
+
+        monkeypatch.setattr(contrary, "fetch_recent", broke_fetch)
+        assert run(tmp_path) == 0
+        day = digest.load_days(tmp_path)[0]
+        assert len(day["papers"]) == 3
+        assert day["articles"] == []
+        assert "contrary: fetch failed" in capsys.readouterr().err
+
+    def test_contrary_alone_publishes_when_the_others_fail(self, wired, monkeypatch):
         tmp_path, _ = wired
 
         def broke_arxiv(**kw):
@@ -379,5 +496,36 @@ class TestIndependentSourceFailure:
 
         monkeypatch.setattr(arxiv, "fetch_recent", broke_arxiv)
         monkeypatch.setattr(hackernews, "fetch_recent", broke_hn)
+        monkeypatch.setattr(
+            contrary, "fetch_recent", lambda **kw: contrary.Fetched(articles=[article(1)])
+        )
+        monkeypatch.setattr(
+            cli.agent,
+            "select_articles",
+            lambda cands, **kw: [(a, "worth reading") for a in cands[: kw["count"]]],
+        )
+        assert run(tmp_path) == 0
+        day = digest.load_days(tmp_path)[0]
+        assert day["papers"] == []
+        assert day["stories"] == []
+        assert len(day["articles"]) == 1
+
+    def test_all_three_sources_failing_is_the_only_thing_that_exits_nonzero(
+        self, wired, monkeypatch
+    ):
+        tmp_path, _ = wired
+
+        def broke_arxiv(**kw):
+            raise arxiv.FetchError("arXiv is down")
+
+        def broke_hn(**kw):
+            raise hackernews.FetchError("hn is down")
+
+        def broke_contrary(**kw):
+            raise contrary.FetchError("contrary is down")
+
+        monkeypatch.setattr(arxiv, "fetch_recent", broke_arxiv)
+        monkeypatch.setattr(hackernews, "fetch_recent", broke_hn)
+        monkeypatch.setattr(contrary, "fetch_recent", broke_contrary)
         assert run(tmp_path) == 1
         assert digest.load_days(tmp_path) == []
