@@ -27,6 +27,7 @@ def deep_dive(n: int = 1) -> dict:
         "author_line": "Alexander Zou, Claire Burch",
         "published": "2026-08-06T14:28:06+00:00",
         "description": "",
+        "kind": "deep dive",
         "reason": "a clear read on the AI compute buildout",
     }
 
@@ -260,12 +261,23 @@ class TestContraryPage:
         assert "August 6, 2026" in page
         assert "a clear read on the AI compute buildout" in page
 
-    def test_a_pick_carries_a_contrary_chip_but_no_verification_chip(self):
+    def test_a_pick_carries_a_kind_chip_but_no_verification_chip(self):
         page = site.render_contrary([day("2026-08-15", articles=[deep_dive(1)])])
-        assert '<span class="chip cat">Contrary Research</span>' in page
+        assert '<span class="chip cat">Deep dive</span>' in page
         assert "quote verified" not in page
         assert "figures checked" not in page
         assert "<blockquote" not in page
+
+    def test_a_company_breakdown_pick_shows_its_kind_chip(self):
+        breakdown = {**deep_dive(1), "kind": "company breakdown", "title": "Legora"}
+        page = site.render_contrary([day("2026-08-15", articles=[breakdown])])
+        assert '<span class="chip cat">Company breakdown</span>' in page
+        assert "Legora" in page
+
+    def test_a_record_without_a_kind_defaults_to_deep_dive(self):
+        no_kind = {k: v for k, v in deep_dive(1).items() if k != "kind"}
+        page = site.render_contrary([day("2026-08-15", articles=[no_kind])])
+        assert '<span class="chip cat">Deep dive</span>' in page
 
     def test_multiple_picks_all_appear(self):
         page = site.render_contrary(

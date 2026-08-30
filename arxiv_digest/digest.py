@@ -88,6 +88,7 @@ def to_article_record(article: Article, reason: str) -> dict:
         "author_line": article.author_line,
         "published": article.published.isoformat(),
         "description": article.description,
+        "kind": article.kind,
         "reason": reason,
     }
 
@@ -277,7 +278,7 @@ def render_records(
     if article_count:
         parts.append(
             f"{article_count} Contrary Research "
-            f"{_plural(article_count, 'deep dive')} picked"
+            f"{_plural(article_count, 'piece')} picked"
         )
     if parts:
         summary_line = f"{_join(parts)}, by {model_label}."
@@ -347,8 +348,9 @@ def render_records(
     if articles:
         lines += ["## From Contrary Research", ""]
         for a in articles:
+            kind = (a.get("kind") or "deep dive").capitalize()
             byline = f" by {a['author_line']}" if a.get("author_line") else ""
-            lines += [f"- [{a['title']}]({a['url']}).{byline} {a['reason']}"]
+            lines += [f"- [{a['title']}]({a['url']}). {kind}{byline}. {a['reason']}"]
         lines += [""]
 
     failures = []

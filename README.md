@@ -4,7 +4,8 @@ Fetches the day's new AI papers from arXiv, picks a few worth reading, reads
 each one's body where arXiv renders it, and publishes technical notes as a
 small static site: one page per day, one index you click a date from. Two
 lighter sources run alongside it, each on its own tab: a handful of Hacker
-News stories, and a couple of Contrary Research deep dives leaning to AI and
+News stories, and a couple of Contrary Research pieces, its editorial deep
+dives and company breakdowns, leaning to AI, software and the business of
 technology. Both are fetched and picked for the same reader, with no summary
 or verification step, since picking something to read makes no factual claim
 that needs checking.
@@ -57,24 +58,28 @@ worth a click makes none, so there is nothing to check it against.
 ## Contrary Research
 
 A third source, picked the same way: [Contrary Research](https://research.contrary.com)
-publishes long editorial deep dives on markets and frontier industries, and a
-selector picks a couple a day with a one-line reason each, weighted toward AI,
-software and the technology industry over its biotech, energy, space and
-defense pieces.
+publishes long editorial deep dives on markets and frontier industries, plus
+several hundred company business breakdowns, and a selector picks a couple a
+day with a one-line reason each, weighted toward AI, software and the business
+of technology over its biotech, energy, space and defense pieces.
 
-The articles come from Contrary's public Prismic content API, one request for
-the whole set of editorial deep dives, newest first by publish date. That is
-what separates the essays a reader follows the site for from its several
-hundred company business breakdowns: the API carries a `deepDive` flag and the
-query asks for it directly. Every article resolves to a stable
+The articles come from Contrary's public Prismic content API. The API carries a
+`deepDive` flag that separates the editorial essays from the company breakdowns,
+and both are fetched: every deep dive in one request, and the newest slice of
+company breakdowns in another. The two are merged newest first, each tagged with
+its kind so the site can show which it is. Company breakdowns are ordered by
+`datePublished` because a breakdown's `first_publication_date` is often a
+migration timestamp years off its real date, and only the newest two dozen are
+pulled, trimmed with the API's `fetch` parameter so a page that is megabytes of
+body content comes back as tens of kilobytes. Every article resolves to a stable
 `research.contrary.com/report/<slug>` link, and author bylines come back in the
 same request. Like Hacker News, nothing here is summarized or verified.
 
-Contrary publishes on the order of once a week, not once a day, so this tab
-does not turn over every morning the way the papers do. The daily pick rotates
-through the pool instead: `seen-contrary.json` records what has already run, so
-the same deep dive does not lead two days running, and the tab slowly works its
-way through the catalogue.
+Contrary publishes deep dives on the order of once a week and company breakdowns
+a little more often, not the daily churn of the papers, so this tab does not turn
+over every morning. The daily pick rotates through the pool instead:
+`seen-contrary.json` records what has already run, so the same piece does not
+lead two days running, and the tab slowly works its way through the catalogue.
 
 The three sources are independent: any one failing to fetch or pick anything
 still lets the others publish, and the run only fails if all three come back
@@ -150,10 +155,10 @@ Useful flags:
 | `--hn-interests` | engineering practice, DevOps, job market, AI news | what the Hacker News selector favours |
 | `--no-hn` | off | skip Hacker News entirely |
 | `--hn-repeats` | off | allow stories from an earlier digest |
-| `--contrary-count` | 2 | Contrary Research deep dives to pick, capped at 4 |
-| `--contrary-interests` | AI, software, infrastructure, tech markets | what the Contrary selector favours |
+| `--contrary-count` | 2 | Contrary Research pieces to pick, capped at 4 |
+| `--contrary-interests` | AI, software, infrastructure, tech business | what the Contrary selector favours |
 | `--no-contrary` | off | skip Contrary Research entirely |
-| `--contrary-repeats` | off | allow deep dives from an earlier digest |
+| `--contrary-repeats` | off | allow pieces from an earlier digest |
 | `--stdout` | off | print instead of writing anything |
 | `--no-site` | off | archive and markdown only |
 | `-o, --out-dir` | `digests` | where the archive lives |
@@ -188,7 +193,7 @@ the papers, where ten long verified write-ups would bury them. Each is a ledger
 of smaller cards, newest day first. A Hacker News card is a title, its points
 and comments, a link to the discussion, and the one-line reason it was picked.
 A Contrary Research card is a title, its byline and date, and the reason, under
-a `Contrary Research` chip. Both tabs stay skimmable and filterable the same way
+a chip naming its kind, deep dive or company breakdown. Both tabs stay skimmable and filterable the same way
 the papers do.
 
 The checks are visible where they matter, as chips next to the authors:
@@ -317,15 +322,17 @@ story is worth a click makes no such claim, so `select_stories` mirrors
 `select()`'s shortlist-then-ask shape with no summarize or verify step behind
 it, and no `webtext` fetch of the linked article's body.
 
-**The `deepDive` flag is what makes Contrary a reader's tab, not a scraper.**
-Contrary's content API returns one `article` type covering both editorial deep
-dives and several hundred company business breakdowns. The reader wants the
-essays, so `contrary.py` filters on the `deepDive` flag at the query rather than
-guessing from the slug, and builds the link from the universal
-`/report/<slug>` route every article kind resolves to. If Contrary ever renames
-that flag or that route, this source goes quiet rather than publishing the wrong
-thing, which is why both live in one small module behind the same swallow-and-log
-failure contract as the other two sources.
+**The `deepDive` flag tags the kind, it no longer gates the source.** Contrary's
+content API returns one `article` type covering both editorial deep dives and
+several hundred company business breakdowns. An earlier version filtered the
+query to `deepDive:true` and published only the essays; folding the breakdowns in
+meant running two queries, the essays and the newest slice of breakdowns, and
+reading the flag off each result to tag its kind rather than to include or
+exclude it. The link is built from the universal `/report/<slug>` route every
+article kind resolves to. If Contrary ever renames that flag or that route, the
+kind tag degrades to "deep dive" and the link goes quiet rather than publishing
+the wrong thing, which is why both live in one small module behind the same
+swallow-and-log failure contract as the other two sources.
 
 ## Failure behaviour
 
@@ -339,16 +346,18 @@ one source failing never blocks the others from publishing.
 - Hacker News unreachable or unparseable: logged, it contributes nothing, the
   other two still publish.
 - Contrary Research unreachable or unparseable: logged, it contributes nothing,
-  the other two still publish.
+  the other two still publish. Within Contrary the deep-dive query is the core
+  and the company-breakdown query is additive, so if only the breakdowns fail
+  the tab still gets its deep dives rather than losing the day.
 - All three sources unreachable or empty: exit 1, and the existing site is left
   exactly as it was.
 - A quiet weekend on arXiv: the window widens to a week before giving up. The
   same widening applies to Hacker News's window. Contrary has no window to
-  widen: it publishes on the order of once a week, so the whole editorial set
-  is the candidate pool every day.
+  widen: it publishes weekly at most, so the whole deep-dive set plus the newest
+  slice of company breakdowns is the candidate pool every day.
 - arXiv selection unusable after a retry: falls back to the newest papers, and
   says so on the page. Hacker News and Contrary selection do the same, falling
-  back to the newest stories and deep dives.
+  back to the newest stories and Contrary pieces.
 - No HTML rendering for a paper: falls back to the abstract, and says so.
 - Citation or figures unverifiable after a retry: summary is kept and flagged.
   Hacker News stories are never summarized, so there is nothing to flag.
@@ -388,7 +397,7 @@ hitting it stops the run and publishes what is already summarized.
 
 Papers already summarized are recorded in `digests/seen.json` and skipped, so
 the same paper does not lead the digest two days running. Hacker News stories
-are recorded the same way in `digests/seen-hn.json`, and Contrary deep dives in
+are recorded the same way in `digests/seen-hn.json`, and Contrary pieces in
 `digests/seen-contrary.json`. Each source keeps its own file so an arXiv id, an
 HN id and a Contrary slug can never collide and wrongly filter one another out.
 Hacker News and Contrary each cost one selection call and no per-item summarize
