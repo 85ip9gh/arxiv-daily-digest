@@ -14,9 +14,10 @@ newest-first slice, not a time window.
 
 Contrary's site is a Prismic-backed SPA. The reader-facing `article` documents
 split into company business breakdowns (the bulk of them) and editorial deep
-dives. The `deepDive` flag is what separates the essays a reader follows the
-site for from the several hundred company profiles, so the query asks Prismic
-for that flag directly rather than fetching everything and filtering here.
+dives, told apart by the `deepDive` flag. Both are fetched: every deep dive,
+and the newest slice of company breakdowns, whose recent entries are mostly AI,
+tech and the business around them. Two searches, merged newest first, each row
+tagged with its `kind` so the rest of the pipeline can show which it is.
 """
 from __future__ import annotations
 
@@ -43,11 +44,15 @@ REPORT_PATH = "/report/"
 # trusting an ordering over a custom field.
 PAGE_SIZE = 100
 
-_BOILERPLATE = (
-    "a report from contrary research.",
-    "a deep dive from contrary research.",
-    "a perspective from contrary research.",
-    "a transcript from contrary research.",
+# Contrary's preview text is often a templated SEO string with no real content:
+# the deep-dive variants are the bare sentence, and every company breakdown opens
+# "A report from Contrary Research. Discover <Company>'s founding story...". A
+# prefix match drops both, where an exact match caught only the deep-dive form.
+_BOILERPLATE_PREFIXES = (
+    "a report from contrary research",
+    "a deep dive from contrary research",
+    "a perspective from contrary research",
+    "a transcript from contrary research",
 )
 
 
@@ -57,7 +62,13 @@ class FetchError(RuntimeError):
 
 @dataclass(frozen=True)
 class Article:
-    """One Contrary deep dive, flattened to the fields the digest uses."""
+    """One Contrary article, flattened to the fields the digest uses.
+
+    `kind` is "deep dive" or "company breakdown", from the `deepDive` flag. It
+    defaults to "deep dive" so an article parsed from a payload that never
+    carried the flag (an older archive, a test fixture) reads as one, which is
+    what the whole catalogue was before company breakdowns were folded in.
+    """
 
     article_id: str
     title: str
@@ -65,6 +76,7 @@ class Article:
     published: datetime
     authors: tuple[str, ...] = ()
     description: str = ""
+    kind: str = "deep dive"
 
     @property
     def author_line(self) -> str:
@@ -133,7 +145,8 @@ def _authors(value: object) -> tuple[str, ...]:
 
 def _description(value: object) -> str:
     text = str(value or "").strip()
-    if text.lower() in _BOILERPLATE:
+    low = text.lower()
+    if any(low.startswith(prefix) for prefix in _BOILERPLATE_PREFIXES):
         return ""
     return text
 
@@ -158,6 +171,9 @@ def _parse_result(result: dict) -> Article | None:
     )
     if published is None:
         published = datetime.now(timezone.utc)
+    # Only an explicit false marks a company breakdown. A missing flag means the
+    # payload never carried it, and the safe reading is a deep dive.
+    kind = "company breakdown" if data.get("deepDive") is False else "deep dive"
     return Article(
         article_id=uid,
         title=title,
@@ -165,18 +181,32 @@ def _parse_result(result: dict) -> Article | None:
         published=published,
         authors=_authors(data.get("authors")),
         description=_description(data.get("previewDescription")),
+        kind=kind,
     )
 
 
 def parse_results(payload: dict) -> list[Article]:
-    """Turn a Prismic search response into articles, skipping unusable ones,
-    newest first by publish date."""
+    """Turn a Prismic search response into articles, skipping unusable ones and
+    deduplicating by uid, newest first by publish date.
+
+    The deep-dive and company-breakdown searches are merged into one payload
+    before parsing. A report is one kind or the other, never both, so the dedup
+    is a guard on that invariant rather than something the data needs, and the
+    first mention of a uid (the deep-dive search runs first) wins.
+    """
     results = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(results, list):
         return []
     articles = [a for a in (_parse_result(r) for r in results) if a is not None]
-    articles.sort(key=lambda a: a.published, reverse=True)
-    return articles
+    seen: set[str] = set()
+    unique: list[Article] = []
+    for article in articles:
+        if article.article_id in seen:
+            continue
+        seen.add(article.article_id)
+        unique.append(article)
+    unique.sort(key=lambda a: a.published, reverse=True)
+    return unique
 
 
 def _get(url: str, *, timeout: int, retries: int) -> dict:
@@ -223,6 +253,45 @@ def build_query(ref: str) -> str:
     return f"{API_ROOT}/documents/search?{urllib.parse.urlencode(params)}"
 
 
+# Company breakdowns are the bulk of the catalogue (462 against ~60 deep dives)
+# and the recent ones are overwhelmingly AI, tech and the business around them,
+# which is what a reader of this digest wants. Only the newest slice is fetched,
+# a fixed count, not a time window: enough to keep the candidate pool current
+# without pulling years of history no one will pick. `datePublished` is the
+# reliable recency field here, the mirror image of the deep dives: a breakdown's
+# `first_publication_date` is frequently a migration timestamp years off its real
+# date, while its `datePublished` is sound.
+COMPANY_PAGE_SIZE = 24
+
+# Trim each result to the fields the digest reads. Without it a page of company
+# breakdowns is ~8.6 MB of body content; with it the same page is a few tens of
+# kilobytes. `deepDive` is kept so the parser can still tag the kind.
+_COMPANY_FETCH = (
+    "article.title,article.previewTitle,article.datePublished,"
+    "article.previewDescription,article.authors,article.deepDive"
+)
+
+
+def build_company_query(ref: str) -> str:
+    """The search URL for the newest company breakdowns, newest first by publish
+    date.
+
+    The predicate is the complement of `build_query`'s: an article that is not
+    flagged as a deep dive. Ordered by `datePublished` for the recency reason
+    above, trimmed by `fetch` to keep the payload small, and `fetchLinks` still
+    pulls each author's name so a byline needs no extra request.
+    """
+    params = {
+        "ref": ref,
+        "q": '[[at(document.type,"article")][not(my.article.deepDive,true)]]',
+        "pageSize": COMPANY_PAGE_SIZE,
+        "orderings": "[my.article.datePublished desc]",
+        "fetch": _COMPANY_FETCH,
+        "fetchLinks": "author.author",
+    }
+    return f"{API_ROOT}/documents/search?{urllib.parse.urlencode(params)}"
+
+
 @dataclass(frozen=True)
 class Fetched:
     """What came back. No window field: Contrary has no hour window to report."""
@@ -238,13 +307,22 @@ def fetch_recent(
     timeout: int = DEFAULT_TIMEOUT,
     retries: int = 2,
 ) -> Fetched:
-    """Fetch the current editorial deep dives, newest first by publish date.
+    """Fetch the deep dives and the newest company breakdowns, merged and newest
+    first by publish date.
 
-    Two requests, the standard Prismic flow: the API root carries the master
-    ref that the search must be pinned to, then the search itself. Both retry
+    Three requests: the API root carries the master ref the searches pin to,
+    then the two searches. The deep-dive search is the original source and its
+    failure is fatal; the company-breakdown search is additive, so a failure
+    there degrades to deep dives only rather than losing the day. Each retries
     on a network error the same way the arXiv and Hacker News fetches do.
     """
     root = _get(API_ROOT, timeout=timeout, retries=retries)
     ref = _master_ref(root)
-    payload = _get(build_query(ref), timeout=timeout, retries=retries)
-    return Fetched(parse_results(payload))
+    deep = _get(build_query(ref), timeout=timeout, retries=retries)
+    results = list(deep.get("results") or [])
+    try:
+        company = _get(build_company_query(ref), timeout=timeout, retries=retries)
+        results += list(company.get("results") or [])
+    except FetchError:
+        pass
+    return Fetched(parse_results({"results": results}))
