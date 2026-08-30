@@ -50,8 +50,9 @@ DEFAULT_HN_INTERESTS = (
 DEFAULT_CONTRARY_INTERESTS = (
     "artificial intelligence and machine learning, software and "
     "developer tooling, computing and cloud infrastructure, and the "
-    "technology industry and its markets, strongly preferred over Contrary's "
-    "biotech, energy, space, defense and consumer deep dives"
+    "business and economics of technology, including the companies, markets "
+    "and funding shaping the industry, strongly preferred over Contrary's "
+    "biotech, energy, space, defense and consumer pieces"
 )
 
 SELECT_SCHEMA = {
@@ -350,17 +351,18 @@ def select_stories(
 
 
 CONTRARY_SYSTEM = (
-    "You are a technically literate reader scanning Contrary Research's deep "
-    "dives for a software engineer who follows AI and the technology industry. "
-    "You favour substance over hype and say in one plain sentence why an essay "
-    "earns a slot. Never use em-dashes."
+    "You are a technically literate reader scanning Contrary Research for a "
+    "software engineer who follows AI, the technology industry and the business "
+    "behind it. Contrary publishes editorial deep dives and company breakdowns; "
+    "both are fair game. You favour substance over hype and say in one plain "
+    "sentence why a piece earns a slot. Never use em-dashes."
 )
 
 
 def _contrary_candidate_block(articles: list[Article]) -> str:
     lines = []
     for i, article in enumerate(articles):
-        entry = f"[{i}] {article.title}"
+        entry = f"[{i}] {article.title}  ({article.kind}, {article.published.date().isoformat()})"
         if article.author_line:
             entry += f"\n    authors: {article.author_line}"
         if article.description:
@@ -378,7 +380,8 @@ def select_articles(
     attempts: int = 2,
     shortlist: int = 40,
 ) -> list[tuple[Article, str]]:
-    """Pick `count` deep dives and keep the selector's one-line reason for each.
+    """Pick `count` Contrary pieces and keep the selector's one-line reason for
+    each. The pool mixes editorial deep dives and company breakdowns.
 
     Mirrors `select_stories` exactly: same shortlist-then-ask shape, same retry
     on an unusable answer, same fall back to the newest `count` articles rather
@@ -390,10 +393,11 @@ def select_articles(
         return [(a, "only candidate for the day") for a in articles]
 
     prompt = (
-        f"Here are {len(articles)} recent deep dives from Contrary Research.\n\n"
+        f"Here are {len(articles)} recent pieces from Contrary Research, a mix "
+        f"of editorial deep dives and company breakdowns.\n\n"
         f"{_contrary_candidate_block(articles)}\n\n"
         f"Pick the {count} most worth reading for someone interested in: {interests}.\n"
-        f"Prefer substance over hype. Do not pick two essays that make the "
+        f"Prefer substance over hype. Do not pick two that make the "
         f"same point.\n"
         f"Give each pick's list index and one sentence saying why it earns a slot."
     )

@@ -326,10 +326,22 @@ class TestSelectArticles:
         assert em not in picks[0][1]
         assert picks[0][1] == "deep, but readable"
 
-    def test_default_interests_lean_to_tech_and_ai(self):
+    def test_default_interests_lean_to_tech_ai_and_business(self):
         text = agent.DEFAULT_CONTRARY_INTERESTS.lower()
         assert "artificial intelligence" in text
         assert "software" in text
+        assert "business" in text
+
+    def test_candidate_block_shows_each_piece_kind_and_date(self):
+        block = agent._contrary_candidate_block([deepdive(0)])
+        assert "(deep dive, 2026-08-14)" in block
+
+    def test_candidate_block_marks_a_company_breakdown(self):
+        from dataclasses import replace
+
+        breakdown = replace(deepdive(0), title="Legora", kind="company breakdown")
+        block = agent._contrary_candidate_block([breakdown])
+        assert "Legora  (company breakdown, 2026-08-14)" in block
 
 
 class TestSummarize:

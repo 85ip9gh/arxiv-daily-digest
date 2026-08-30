@@ -782,25 +782,29 @@ def render_hn(days: list[dict]) -> str:
 
 
 CONTRARY_TAGLINE = (
-    "A couple of Contrary Research deep dives worth reading each day, leaning "
-    "to AI and technology: a title and one line on why it was picked. Not "
-    "summarized, and not checked against a source, because a one-line reason "
-    "makes no factual claim to verify."
+    "A couple of Contrary Research pieces worth reading each day, its editorial "
+    "deep dives and company breakdowns, leaning to AI, software and the business "
+    "of technology: a title and one line on why it was picked. Not summarized, "
+    "and not checked against a source, because a one-line reason makes no factual "
+    "claim to verify."
 )
 
 
 def _deepdive(article: dict) -> str:
-    """One picked Contrary deep dive: title, its byline and date, and the reason
-    it earned a slot. Nothing here is a factual claim about the essay's contents
-    the way a paper summary is, so there is nothing to verify and nothing to
-    disclose, exactly like a Hacker News pick."""
+    """One picked Contrary piece: title, its byline and date, the kind chip
+    (deep dive or company breakdown), and the reason it earned a slot. Nothing
+    here is a factual claim about the contents the way a paper summary is, so
+    there is nothing to verify and nothing to disclose, exactly like a Hacker
+    News pick. `kind` defaults to deep dive for records archived before company
+    breakdowns were folded in, when every pick was one."""
     bits = []
     published = str(article.get("published", ""))
     if published:
         bits.append(_e(_long_date(published[:10])))
     if article.get("author_line"):
         bits.append(_e(article["author_line"]))
-    bits.append('<span class="chip cat">Contrary Research</span>')
+    kind = (article.get("kind") or "deep dive").capitalize()
+    bits.append(f'<span class="chip cat">{_e(kind)}</span>')
     meta = " &middot; ".join(bits)
     reason = article.get("reason", "")
     reason_html = f'<p class="reason">{_e(reason)}</p>\n' if reason else ""
@@ -847,6 +851,7 @@ def render_contrary(days: list[dict]) -> str:
             [day["date"], _long_date(day["date"]), _weekday(day["date"])]
             + [str(a.get("title", "")) for a in articles]
             + [str(a.get("author_line", "")) for a in articles]
+            + [str(a.get("kind", "")) for a in articles]
         ).lower()
         rows.append(
             f'<li data-text="{_e(haystack)}">\n'

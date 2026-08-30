@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timezone
 
 from arxiv_digest.agent import Summary
@@ -423,7 +424,7 @@ class TestRenderWithStories:
 
 
 class TestRenderWithArticles:
-    def test_the_contrary_section_lists_title_byline_and_reason(self):
+    def test_the_contrary_section_lists_title_byline_kind_and_reason(self):
         text = render(
             [summary(1)],
             day=date(2026, 8, 15),
@@ -432,8 +433,15 @@ class TestRenderWithArticles:
         )
         assert "## From Contrary Research" in text
         assert "[Deep Dive 1](https://research.contrary.com/report/deep-dive-1)" in text
-        assert "by Ada Rivers, Bo Chen" in text
+        assert "Deep dive by Ada Rivers, Bo Chen" in text
         assert "sharp on AI infra" in text
+
+    def test_a_company_breakdown_shows_its_kind_in_the_section(self):
+        breakdown = replace(deepdive(1), kind="company breakdown")
+        text = render(
+            [], day=date(2026, 8, 15), model_label="m", articles=[(breakdown, "big raise")]
+        )
+        assert "Company breakdown by Ada Rivers, Bo Chen. big raise" in text
 
     def test_the_summary_line_counts_all_three_kinds(self):
         text = render(
@@ -445,12 +453,12 @@ class TestRenderWithArticles:
         )
         assert (
             "1 paper summarized, 1 Hacker News story picked, and 2 Contrary "
-            "Research deep dives picked, by m." in text
+            "Research pieces picked, by m." in text
         )
 
     def test_an_articles_only_day_reads_naturally(self):
         text = render([], day=date(2026, 8, 15), model_label="m", articles=[(deepdive(1), "x")])
-        assert "1 Contrary Research deep dive picked, by m." in text
+        assert "1 Contrary Research piece picked, by m." in text
 
     def test_no_articles_renders_no_contrary_section(self):
         text = render([summary(1)], day=date(2026, 8, 15), model_label="m")

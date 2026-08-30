@@ -1,7 +1,13 @@
+import urllib.parse
 from datetime import datetime, timezone
 
 from arxiv_digest import contrary as module
-from arxiv_digest.contrary import Article, build_query, parse_results
+from arxiv_digest.contrary import (
+    Article,
+    build_company_query,
+    build_query,
+    parse_results,
+)
 
 
 def result(
@@ -11,6 +17,7 @@ def result(
     first_pub="2026-08-10T21:01:47+0000",
     description="A deep dive from Contrary Research.",
     authors=(("jane-doe", "Jane Doe"),),
+    deep_dive=None,
 ):
     data = {
         "title": [{"type": "paragraph", "text": title, "spans": []}] if title else [],
@@ -21,6 +28,8 @@ def result(
             for slug, name in authors
         ],
     }
+    if deep_dive is not None:
+        data["deepDive"] = deep_dive
     return {"uid": uid, "first_publication_date": first_pub, "data": data}
 
 
@@ -91,6 +100,28 @@ class TestDescription:
         a = parse_results({"results": [result(description="Why launch costs collapsed.")]})[0]
         assert a.description == "Why launch costs collapsed."
 
+    def test_company_seo_boilerplate_prefix_is_dropped(self):
+        seo = (
+            "A report from Contrary Research. Discover Legora's founding story, "
+            "product, business model, and an in-depth analysis of the business."
+        )
+        a = parse_results({"results": [result(description=seo)]})[0]
+        assert a.description == ""
+
+
+class TestKind:
+    def test_a_true_flag_tags_a_deep_dive(self):
+        a = parse_results({"results": [result(deep_dive=True)]})[0]
+        assert a.kind == "deep dive"
+
+    def test_a_false_flag_tags_a_company_breakdown(self):
+        a = parse_results({"results": [result(deep_dive=False)]})[0]
+        assert a.kind == "company breakdown"
+
+    def test_a_missing_flag_defaults_to_deep_dive(self):
+        a = parse_results({"results": [result()]})[0]
+        assert a.kind == "deep dive"
+
 
 def test_query_asks_for_published_editorial_deep_dives():
     url = build_query("master-ref-123")
@@ -98,6 +129,16 @@ def test_query_asks_for_published_editorial_deep_dives():
     assert "my.article.deepDive" in url
     assert "fetchLinks=author.author" in url
     assert "document.type" in url
+
+
+def test_company_query_asks_for_non_deep_dives_newest_first():
+    url = build_company_query("master-ref-123")
+    decoded = urllib.parse.unquote_plus(url)
+    assert "ref=master-ref-123" in url
+    assert "not(my.article.deepDive,true)" in decoded
+    assert "my.article.datePublished desc" in decoded
+    assert "fetch=" in url
+    assert "fetchLinks=author.author" in url
 
 
 def _responses(monkeypatch, *, ref="ref-abc", results=None, fail_times=0):
@@ -173,6 +214,69 @@ class TestFetchRecent:
             assert False, "expected FetchError"
         except module.FetchError:
             pass
+
+
+def _merged_responses(monkeypatch, *, deep, company, company_fails=False):
+    """Mock the three-step flow fetch_recent now runs: the API root for the ref,
+    then the deep-dive search, then the company-breakdown search."""
+    calls = {"n": 0, "searches": 0}
+
+    class Response:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, *a, **k):
+        calls["n"] += 1
+        if "documents/search" in url:
+            calls["searches"] += 1
+            if calls["searches"] == 1:
+                return Response({"results": deep})
+            if company_fails:
+                raise module.requests.RequestException("company down")
+            return Response({"results": company})
+        return Response({"refs": [{"id": "master", "ref": "r"}]})
+
+    monkeypatch.setattr(module.requests, "get", fake_get)
+    monkeypatch.setattr(module.time, "sleep", lambda *_: None)
+    return calls
+
+
+class TestMergedFetch:
+    def test_deep_dives_and_company_breakdowns_are_merged_newest_first(self, monkeypatch):
+        _merged_responses(
+            monkeypatch,
+            deep=[result(uid="essay", date_published="2026-08-01T00:00:00+0000", deep_dive=True)],
+            company=[result(uid="legora", date_published="2026-08-28T00:00:00+0000", deep_dive=False)],
+        )
+        fetched = module.fetch_recent()
+        assert [a.article_id for a in fetched.articles] == ["legora", "essay"]
+        assert {a.kind for a in fetched.articles} == {"deep dive", "company breakdown"}
+
+    def test_a_company_failure_degrades_to_deep_dives(self, monkeypatch):
+        _merged_responses(
+            monkeypatch,
+            deep=[result(uid="essay", deep_dive=True)],
+            company=[],
+            company_fails=True,
+        )
+        fetched = module.fetch_recent(retries=0)
+        assert [a.article_id for a in fetched.articles] == ["essay"]
+
+    def test_a_uid_in_both_searches_appears_once_as_the_deep_dive(self, monkeypatch):
+        _merged_responses(
+            monkeypatch,
+            deep=[result(uid="dup", deep_dive=True)],
+            company=[result(uid="dup", deep_dive=False)],
+        )
+        fetched = module.fetch_recent()
+        assert [a.article_id for a in fetched.articles] == ["dup"]
+        assert fetched.articles[0].kind == "deep dive"
 
 
 class TestArticleUrl:
