@@ -9,7 +9,7 @@ description = "Picks a few of the day's new arXiv AI papers and Hacker News stor
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["requests>=2.31"]
+dependencies = ["requests>=2.31", "langgraph>=1.0,<2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
