@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from . import agent, arxiv, contrary, digest, hackernews, site
+from .graph import build_pipeline
 from .llm import LLMConfig, LLMError, RateLimitExhausted, available_models, check
 
 DEFAULT_OUT_DIR = Path("digests")
@@ -407,50 +408,19 @@ def _run_contrary(args, config: LLMConfig, seen: set[str]) -> list:
     return picks
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _publish(state: dict) -> int:
+    """Assemble the day, write the archive, rebuild the site. Returns the exit code.
 
-    # The rebuild path never touches a model, so it must not need a key either.
-    if args.rebuild_site:
-        return _rebuild(args)
-
-    try:
-        config = LLMConfig.from_env()
-    except LLMError as exc:
-        print(f"config error: {exc}", file=sys.stderr)
-        return 2
-
-    if args.check:
-        return _check(config)
-
-    # seen.json and seen-hn.json are read up front, independent of whether
-    # either fetch succeeds, so a failed source cannot corrupt the other's
-    # dedup state when it is saved back at the end of the run.
-    seen = set() if args.repeats else digest.load_seen(args.out_dir)
-    hn_seen = (
-        set()
-        if args.hn_repeats
-        else digest.load_seen(args.out_dir, filename=digest.SEEN_HN_FILE)
-    )
-    contrary_seen = (
-        set()
-        if args.contrary_repeats
-        else digest.load_seen(args.out_dir, filename=digest.SEEN_CONTRARY_FILE)
-    )
-
-    # No source can take another down. Each fetches, selects, and (for arXiv)
-    # summarizes and verifies behind its own error handling, and only an empty
-    # result from all three means the run has nothing to publish.
-    summaries = _run_arxiv(args, config, seen)
-    hn_picks = _run_hn(args, config, hn_seen)
-    contrary_picks = _run_contrary(args, config, contrary_seen)
-
-    if not summaries and not hn_picks and not contrary_picks:
-        print(
-            f"nothing to publish today, leaving {args.out_dir} untouched",
-            file=sys.stderr,
-        )
-        return 1
+    The tail of the run, reached only when at least one source produced
+    something. It reads everything off the pipeline state so the graph's publish
+    node stays a one-liner, and its behaviour is unchanged from when this lived
+    inline at the end of `main`.
+    """
+    args = state["args"]
+    config = state["config"]
+    summaries = state["summaries"]
+    hn_picks = state["hn_picks"]
+    contrary_picks = state["contrary_picks"]
 
     today = date.today()
     # The markdown covers the whole day, so an append run has to render from
@@ -503,18 +473,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {path}", file=sys.stderr)
 
     if not args.repeats:
-        digest.save_seen(args.out_dir, seen, [s.paper.arxiv_id for s in summaries])
+        digest.save_seen(args.out_dir, state["seen"], [s.paper.arxiv_id for s in summaries])
     if not args.hn_repeats:
         digest.save_seen(
             args.out_dir,
-            hn_seen,
+            state["hn_seen"],
             [s.hn_id for s, _ in hn_picks],
             filename=digest.SEEN_HN_FILE,
         )
     if not args.contrary_repeats:
         digest.save_seen(
             args.out_dir,
-            contrary_seen,
+            state["contrary_seen"],
             [a.article_id for a, _ in contrary_picks],
             filename=digest.SEEN_CONTRARY_FILE,
         )
@@ -523,6 +493,63 @@ def main(argv: list[str] | None = None) -> int:
         written = site.build(digest.load_days(args.out_dir), args.site_dir)
         print(f"published {len(written)} pages to {args.site_dir}", file=sys.stderr)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    # The rebuild path never touches a model, so it must not need a key either.
+    if args.rebuild_site:
+        return _rebuild(args)
+
+    try:
+        config = LLMConfig.from_env()
+    except LLMError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.check:
+        return _check(config)
+
+    # seen state is read up front, independent of whether any fetch succeeds, so
+    # a failed source cannot corrupt another's dedup state when it is saved back.
+    seen = set() if args.repeats else digest.load_seen(args.out_dir)
+    hn_seen = (
+        set()
+        if args.hn_repeats
+        else digest.load_seen(args.out_dir, filename=digest.SEEN_HN_FILE)
+    )
+    contrary_seen = (
+        set()
+        if args.contrary_repeats
+        else digest.load_seen(args.out_dir, filename=digest.SEEN_CONTRARY_FILE)
+    )
+
+    # The three sources and the publish step are the nodes of a LangGraph state
+    # graph (see arxiv_digest/graph.py). Each source runs behind its own error
+    # handling and the worst it returns is an empty list, so no source can take
+    # another down; a conditional edge publishes when any produced something and
+    # leaves the archive untouched, exiting nonzero, when none did.
+    pipeline = build_pipeline(
+        run_arxiv=_run_arxiv,
+        run_hn=_run_hn,
+        run_contrary=_run_contrary,
+        publish=_publish,
+    )
+    final = pipeline.invoke(
+        {
+            "args": args,
+            "config": config,
+            "seen": seen,
+            "hn_seen": hn_seen,
+            "contrary_seen": contrary_seen,
+            "summaries": [],
+            "hn_picks": [],
+            "contrary_picks": [],
+            "exit_code": 0,
+        }
+    )
+    return final["exit_code"]
 
 
 if __name__ == "__main__":

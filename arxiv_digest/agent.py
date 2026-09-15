@@ -484,80 +484,19 @@ def summarize(
     `body` is injected by the tests. In production the body is fetched from
     arXiv's HTML rendering, and papers without one fall back to the abstract.
     """
-    if body is None and read_body:
-        body = fulltext.fetch(paper)
-    read_full_text = bool(body)
-    source = f"{paper.abstract}\n\n{body}" if body else paper.abstract
+    # The loop this used to run by hand is now a LangGraph state graph:
+    # generate -> verify -> retry once -> accept. The checks below still live
+    # here and the graph calls them, so the verification is unchanged and only
+    # the control flow moved. See arxiv_digest/graph.py.
+    from .graph import run_summary
 
-    prompt = _prompt_for(paper, source, read_full_text)
-    last_error = ""
-    failure = ""
-    fields = None
-
-    for attempt in range(attempts):
-        try:
-            fields = complete(
-                prompt if not last_error else f"{prompt}\n\nYour last answer was rejected: {last_error}",
-                SUMMARY_SCHEMA,
-                config=config,
-                system=SYSTEM,
-            )
-        except RateLimitExhausted:
-            # Not this paper's fault and not this paper's problem. Flattening it
-            # into "could not summarize 2608.13560" sends the caller off to try
-            # the next nine papers against a wall that is not going to move.
-            raise
-        except LLMError as exc:
-            fields = None
-            # Keep why. A retired model name or a dead key fails identically on
-            # every paper, and ten lines of "could not summarize" send the
-            # reader looking at the papers instead of at the one HTTP body that
-            # says the model no longer exists.
-            failure = str(exc)
-            break
-
-        missing = [k for k in REQUIRED_TEXT if not str(fields.get(k, "")).strip()]
-        if missing:
-            last_error = f"these fields were empty: {', '.join(missing)}"
-            continue
-
-        quote = str(fields.get("quote", "")).strip().strip('"')
-        quote_ok = quote_is_grounded(quote, source)
-        stray = ungrounded_numbers(_checked_text(fields), source)
-
-        if quote_ok and not stray:
-            return _build(paper, fields, quote, reason, True, (), read_full_text)
-
-        problems = []
-        if not quote_ok:
-            problems.append(
-                "your quote does not appear in the source word for word. Copy a "
-                "fragment straight out of the text"
-            )
-        if stray:
-            problems.append(
-                "these figures are not in the source: "
-                f"{', '.join(stray)}. Use only values the text gives"
-            )
-        last_error = ". ".join(problems)
-
-    if fields is None:
-        detail = f": {failure}" if failure else ""
-        raise LLMError(f"could not summarize {paper.arxiv_id} with {config.label}{detail}")
-
-    # The prose survives. The citation and the figures that could not be found
-    # are marked on the page rather than presented as checked.
-    quote = str(fields.get("quote", "")).strip().strip('"')
-    quote_ok = quote_is_grounded(quote, source)
-    stray = ungrounded_numbers(_checked_text(fields), source)
-    return _build(
+    return run_summary(
         paper,
-        fields,
-        quote if quote_ok else "",
-        reason,
-        quote_ok,
-        tuple(stray),
-        read_full_text,
+        config=config,
+        reason=reason,
+        attempts=attempts,
+        body=body,
+        read_body=read_body,
     )
 
 

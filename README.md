@@ -85,6 +85,30 @@ The three sources are independent: any one failing to fetch or pick anything
 still lets the others publish, and the run only fails if all three come back
 empty.
 
+## How it is wired
+
+The control flow is two [LangGraph](https://langchain-ai.github.io/langgraph/)
+state graphs in `arxiv_digest/graph.py`, because the flow was always graph
+shaped and the framework just draws it.
+
+**The day pipeline.** arXiv, Hacker News and Contrary Research are three nodes
+run in sequence, then a conditional edge routes to `publish` when any source
+produced something and to `nothing`, which exits nonzero and leaves the archive
+untouched, when all three came back empty. Sequence rather than parallel is
+deliberate: the token pacing below keeps a single process-wide window and is not
+built for concurrent callers.
+
+**The per-paper summarizer.** One paper's `generate -> verify -> retry` loop,
+the reflection pattern as a real conditional edge: `verify` sends the run back to
+`generate` with the failure quoted when the citation or a figure does not check
+out, and forward to `accept` once it does or the one retry is spent.
+
+What deliberately stayed out of the framework is the model call and its pacing.
+`llm.complete` and its `TokenWindow` are unchanged, and the graph nodes reach
+them through the same functions the checks live in, so the verification that
+makes the output trustworthy is exactly what it was and only the control flow
+moved into the graph.
+
 ## Install
 
 ```bash
@@ -419,7 +443,7 @@ a top-up run that dies partway can only leave the day the same or longer.
 python -m pytest
 ```
 
-245 tests, no network and no model. The arXiv parser runs against a fixture
+267 tests, no network and no model. The arXiv parser runs against a fixture
 feed, the full-text reader against a fixture rendering, the Hacker News client
 against canned Algolia responses, the Contrary Research client against canned
 Prismic responses, and the agent tests replace the model call with canned
@@ -428,4 +452,6 @@ two checks exist to catch. The site tests cover escaping, the pager, the theme
 tokens (every token defined on bare `:root`, both explicit themes redefining
 the same set), story and deep-dive cards, and the promise that a page fetches
 nothing at load. The CLI tests cover all three sources failing independently,
-so one source going down never takes the others with it.
+so one source going down never takes the others with it. The graph tests drive
+both state graphs directly: the summarizer's retry-then-give-up loop, and the
+pipeline's publish-or-nothing routing with fake source runners.
